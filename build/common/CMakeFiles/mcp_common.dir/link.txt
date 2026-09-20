@@ -1,2 +1,0 @@
-/usr/bin/ar qc libmcp_common.a CMakeFiles/mcp_common.dir/src/logger.cpp.o
-/usr/bin/ranlib libmcp_common.a

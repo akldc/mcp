@@ -1,1 +1,0 @@
-/usr/bin/clang++ -g -arch arm64 -dynamiclib -Wl,-headerpad_max_install_names -o libweather.dylib -install_name @rpath/libweather.dylib CMakeFiles/weather.dir/Weather.cpp.o

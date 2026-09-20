@@ -1,1 +1,0 @@
-/usr/bin/clang++ -g -arch arm64 -dynamiclib -Wl,-headerpad_max_install_names -o libnotification.dylib -install_name @rpath/libnotification.dylib CMakeFiles/notification.dir/Notification.cpp.o

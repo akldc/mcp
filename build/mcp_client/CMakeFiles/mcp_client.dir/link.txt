@@ -1,2 +1,0 @@
-/usr/bin/ar qc libmcp_client.a CMakeFiles/mcp_client.dir/src/mcp_client.cpp.o CMakeFiles/mcp_client.dir/src/mcp_tool_manager.cpp.o CMakeFiles/mcp_client.dir/src/mcp_agent_integration.cpp.o CMakeFiles/mcp_client.dir/src/rag/embedding_service.cpp.o CMakeFiles/mcp_client.dir/src/rag/embedding_cache.cpp.o CMakeFiles/mcp_client.dir/src/rag/vector_index.cpp.o CMakeFiles/mcp_client.dir/src/rag/tool_retriever.cpp.o CMakeFiles/mcp_client.dir/src/rag/tool_validator.cpp.o
-/usr/bin/ranlib libmcp_client.a
