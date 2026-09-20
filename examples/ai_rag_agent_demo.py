@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI + MCP 集成测试
+AI + MCP + RAG 交互式演示
 
 使用阿里百炼 (DashScope) AI 模型作为 Agent，通过 MCP 协议调用工具，
 验证完整的 AI Agent → RAG 工具检索 → MCP Server → Plugin 工具调用链路。
@@ -308,15 +308,16 @@ def mcp_tools_to_openai_format(mcp_tools):
 # 测试用例
 # ============================================================================
 
-def run_tests(api_key, embedding_key, llm_model):
+def run_demo(api_key, embedding_key, llm_model):
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    server_path = os.path.join(script_dir, "build", "mcp_server", "mcp_server")
-    plugins_path = os.path.join(script_dir, "build", "mcp_server", "plugins")
-    logs_path = os.path.join(script_dir, "build", "test_logs")
+    project_dir = os.path.dirname(script_dir)
+    server_path = os.path.join(project_dir, "build", "mcp_server", "mcp_server")
+    plugins_path = os.path.join(project_dir, "build", "mcp_server", "plugins")
+    logs_path = os.path.join(project_dir, "build", "test_logs")
 
     if not os.path.isfile(server_path):
         log_fail(f"未找到 mcp_server: {server_path}")
-        print("请先构建项目: mkdir -p build && cd build && cmake .. && make -j$(nproc)")
+        print("请先构建项目: cmake -S . -B build && cmake --build build --parallel")
         return False
 
     results = []
@@ -568,7 +569,7 @@ def run_tests(api_key, embedding_key, llm_model):
     # 汇总
     # ------------------------------------------------------------------
     print(f"\n{BOLD}{'='*60}{NC}")
-    print(f"  {BOLD}测试汇总{NC}")
+    print(f"  {BOLD}演示与验证汇总{NC}")
     print(f"{BOLD}{'='*60}{NC}")
 
     passed = sum(1 for _, ok, _ in results if ok)
@@ -597,8 +598,8 @@ def run_tests(api_key, embedding_key, llm_model):
 
 def main():
     print(f"{BOLD}{'='*60}{NC}")
-    print(f"  {BOLD}AI + MCP 集成测试{NC}")
-    print(f"  使用阿里百炼 (DashScope) AI 模型测试 MCP 完整链路")
+    print(f"  {BOLD}AI + MCP + RAG 交互式演示{NC}")
+    print(f"  使用阿里百炼 (DashScope) AI 模型演示 MCP 完整链路")
     print(f"{BOLD}{'='*60}{NC}")
     print()
 
@@ -631,7 +632,7 @@ def main():
     log_info(f"API Key: {api_key[:8]}...{api_key[-4:]}")
     log_info(f"Embedding Key: {embedding_key[:8]}...{embedding_key[-4:]}")
 
-    success = run_tests(api_key, embedding_key, llm_model)
+    success = run_demo(api_key, embedding_key, llm_model)
     sys.exit(0 if success else 1)
 
 

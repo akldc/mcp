@@ -1,15 +1,13 @@
 /**
- * @file rag_mcp_example.cpp
- * @brief 使用 C++ ToolRetriever 检索相关 MCP 工具的示例
+ * @file mcp_basic_example.cpp
+ * @brief MCPAgentIntegration 的普通 MCP 使用示例（不启用 RAG）
  */
 
 #include "agent_rpc/mcp/mcp_agent_integration.h"
 
-#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string>
-#include <vector>
 
 using namespace agent_rpc::mcp;
 
@@ -19,9 +17,6 @@ struct Options {
     std::string server = "./build/mcp_server/mcp_server";
     std::string plugins = "./build/mcp_server/plugins";
     std::string logs = "./build/example_logs";
-    std::string query;
-    int top_k = 5;
-    float threshold = 0.3F;
 };
 
 void printUsage(const char* program) {
@@ -30,11 +25,7 @@ void printUsage(const char* program) {
               << "  --mcp-server <path>  MCP Server executable\n"
               << "  --plugins <path>     Plugin directory\n"
               << "  --logs <path>        Server log directory\n"
-              << "  --query <text>       Query to retrieve tools for\n"
-              << "  --top-k <n>          Maximum number of tools (default: 5)\n"
-              << "  --threshold <f>      Similarity threshold (default: 0.3)\n"
-              << "  --help               Show this help\n\n"
-              << "DASHSCOPE_API_KEY must be set.\n";
+              << "  --help               Show this help\n";
 }
 
 bool parseOptions(int argc, char* argv[], Options& options) {
@@ -54,12 +45,6 @@ bool parseOptions(int argc, char* argv[], Options& options) {
             options.plugins = argv[++i];
         } else if (arg == "--logs") {
             options.logs = argv[++i];
-        } else if (arg == "--query") {
-            options.query = argv[++i];
-        } else if (arg == "--top-k") {
-            options.top_k = std::stoi(argv[++i]);
-        } else if (arg == "--threshold") {
-            options.threshold = std::stof(argv[++i]);
         } else {
             std::cerr << "Unknown option: " << arg << '\n';
             return false;
@@ -76,12 +61,6 @@ int main(int argc, char* argv[]) {
         return argc > 1 && std::string(argv[1]) == "--help" ? 0 : 2;
     }
 
-    const char* api_key = std::getenv("DASHSCOPE_API_KEY");
-    if (api_key == nullptr || std::string(api_key).empty()) {
-        std::cerr << "DASHSCOPE_API_KEY is required for the RAG example.\n";
-        return 2;
-    }
-
     std::filesystem::create_directories(options.logs);
 
     MCPAgentConfig config;
@@ -91,10 +70,6 @@ int main(int argc, char* argv[]) {
         "--plugins", options.plugins,
         "--logs", options.logs,
     };
-    config.rag_config.enabled = true;
-    config.rag_config.api_key = api_key;
-    config.rag_config.top_k = options.top_k;
-    config.rag_config.similarity_threshold = options.threshold;
 
     MCPAgentIntegration integration;
     if (!integration.initialize(config) || !integration.isAvailable()) {
@@ -102,34 +77,22 @@ int main(int argc, char* argv[]) {
                   << integration.getStatusDescription() << '\n';
         return 1;
     }
-    if (!integration.isRAGEnabled()) {
-        std::cerr << "RAG initialization failed. Check the API key and network.\n";
+
+    const auto tools = integration.getAvailableTools();
+    std::cout << "Available tools (" << tools.size() << "):\n";
+    for (const auto& tool : tools) {
+        std::cout << "  - " << tool.name << ": " << tool.description << '\n';
+    }
+
+    const auto result = integration.callTool(
+        "calculator", R"({"expression":"123 + 456"})");
+    if (!result.success) {
+        std::cerr << "calculator failed: " << result.error << '\n';
         integration.shutdown();
         return 1;
     }
 
-    std::vector<std::string> queries;
-    if (!options.query.empty()) {
-        queries.push_back(options.query);
-    } else {
-        queries = {
-            "计算 123 + 456 的结果",
-            "暂停执行 200 毫秒",
-            "查询北京天气",
-        };
-    }
-
-    for (const auto& query : queries) {
-        std::cout << "\nQuery: " << query << '\n';
-        const auto tools = integration.getRelevantTools(query);
-        std::cout << "Retrieved tools (" << tools.size() << "):\n";
-        for (const auto& tool : tools) {
-            std::cout << "  - " << tool.name << ": " << tool.description << '\n';
-        }
-        std::cout << "Function-calling JSON:\n"
-                  << MCPAgentIntegration::toFunctionCallingFormat(tools) << '\n';
-    }
-
+    std::cout << "\ncalculator result:\n" << result.result << '\n';
     integration.shutdown();
     return 0;
 }

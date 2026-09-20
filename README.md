@@ -51,11 +51,16 @@ mcp_standalone/
 │   │   ├── code-review/        # 代码审查
 │   │   ├── notification/       # 通知
 │   │   └── bacio-quote/        # 名言
-│   └── test/                   # 测试脚本
 ├── examples/                   # 示例代码
-│   ├── rag_mcp_example.cpp
-│   └── ai_mcp_integration_example.cpp
-└── docs/                       # 文档
+│   ├── mcp_basic_example.cpp   # 普通 C++ MCP 示例
+│   ├── rag_mcp_example.cpp     # C++ RAG 工具检索示例
+│   └── ai_rag_agent_demo.py    # Python AI + RAG 交互演示
+├── tests/                      # 可由 CTest 运行的自动测试
+│   ├── integration/
+│   │   ├── mcp_client_stdio_test.cpp
+│   │   └── test_server_stdio.py
+│   └── manual/                 # Python MCP SDK 手工互操作测试
+└── 00docs/                     # 详细文档
     ├── mcp-plugin-development.md
     └── rag-mcp-guide.md
 ```
@@ -108,28 +113,25 @@ mcp_standalone/
 ## 构建
 
 ```bash
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build --parallel
 ```
 
 ### 仅构建 MCP 服务器
 
 ```bash
-cd mcp_server
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
+cmake -S mcp_server -B build-server -DCMAKE_BUILD_TYPE=Release
+cmake --build build-server --parallel
 ```
 
 ### 构建选项
 
 ```bash
 # 不构建示例
-cmake -DBUILD_MCP_EXAMPLES=OFF ..
+cmake -S . -B build -DBUILD_MCP_EXAMPLES=OFF
 
-# Debug 模式
-cmake -DCMAKE_BUILD_TYPE=Debug ..
+# 不构建测试
+cmake -S . -B build -DBUILD_TESTING=OFF
 ```
 
 ## 快速开始
@@ -142,6 +144,21 @@ cmake -DCMAKE_BUILD_TYPE=Debug ..
 
 # SSE 模式
 ./build/mcp_server/mcp_server -s -p ./build/mcp_server/plugins
+```
+
+### 运行 C++ 示例
+
+普通 MCP 示例不需要 API Key：
+
+```bash
+./build/examples/mcp_basic_example
+```
+
+C++ RAG 工具检索示例需要 DashScope API Key：
+
+```bash
+DASHSCOPE_API_KEY="sk-xxx" \
+  ./build/examples/rag_mcp_example --query "计算 123 + 456"
 ```
 
 ### 使用 MCP 客户端
@@ -191,88 +208,63 @@ auto tools = mcp.getRelevantTools("计算 123 + 456");
 std::string json = mcp.getRelevantToolsAsJson("查询天气");
 ```
 
-### 测试 MCP 服务器
+### 自动测试
 
-统一入口脚本，支持两种测试模式：
-
-```bash
-./test_all.sh
-```
-
-运行后选择模式：
-
-- **模式 1 — AI 集成测试（推荐）**：使用阿里百炼 AI 模型，测试完整 Agent 工具调用链路
-- **模式 2 — 基础功能测试**：无需 API Key，仅验证 MCP Server 协议和插件
-
-#### AI 集成测试
-
-使用阿里百炼 (DashScope) 大模型作为 AI Agent，通过 MCP 协议调用工具，验证完整链路：
-
-```
-用户查询 → Embedding 向量化 → RAG 相似度检索 → 筛选相关工具 → LLM (工具选择) → MCP Server (工具执行) → LLM (生成回答)
-```
-
-**前置条件**：
-
-- 阿里百炼 API Key（[申请地址](https://dashscope.console.aliyun.com/)）
-- Python 3.6+（无需额外依赖）
+默认测试不访问外网，也不需要 API Key：
 
 ```bash
-# 交互式运行，终端输入 API Key
-./test_all.sh
-# 选择 1
-
-# 或通过环境变量
-DASHSCOPE_API_KEY="sk-xxx" python3 test_ai_mcp.py
-
-# 指定模型
-DASHSCOPE_API_KEY="sk-xxx" DASHSCOPE_MODEL="qwen-turbo" python3 test_ai_mcp.py
+ctest --test-dir build --output-on-failure
 ```
 
-测试覆盖项：
+当前包含两项集成测试：
 
-| 步骤 | 测试内容 |
+| 测试 | 覆盖范围 |
 |------|----------|
-| MCP 初始化 | 启动服务器，建立 STDIO 连接 |
-| 工具发现 | 获取所有插件注册的工具列表 |
-| RAG 索引构建 | 批量 Embedding 向量化所有工具，建立向量索引 |
-| RAG + AI 交互式调用 | 用户查询 → 向量相似度筛选工具 → 仅相关工具发给 LLM → MCP 执行 → 回传结果 |
-| 基础工具验证 | 直接调用 sleep、calculator、错误处理 |
+| `mcp_client_stdio` | C++ `MCPClient` 启动 Server、发现工具并调用 calculator |
+| `mcp_server_stdio_protocol` | 原始 JSON-RPC initialize、ping、tools/list、calculator、sleep 和错误处理 |
 
-#### 基础功能测试
-
-无需 API Key，直接验证 MCP Server 协议正确性：
+也可以用统一脚本完成配置、构建和测试：
 
 ```bash
-./test_all.sh
-# 选择 2
+./test_all.sh basic
 ```
 
-覆盖：initialize、ping、tools/list、calculator、sleep、error handling。
+### AI + RAG 交互演示
 
-#### 手动测试
+Python 演示使用 DashScope LLM 和 Embedding，通过 MCP 调用工具。它是需要网络和 API Key 的手工演示，不属于默认自动测试：
 
 ```bash
-# 通过管道发送 JSON-RPC 请求
-echo '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}},"id":"1"}' \
-  | ./build/mcp_server/mcp_server -p ./build/mcp_server/plugins -l ./build/test_logs
+DASHSCOPE_API_KEY="sk-xxx" \
+DASHSCOPE_EMBEDDING_KEY="sk-xxx" \
+DASHSCOPE_MODEL="qwen-turbo" \
+python3 examples/ai_rag_agent_demo.py
 ```
 
-#### Python MCP 客户端测试
+也可以运行 `./test_all.sh ai`。
+
+### Python MCP SDK 手工互操作测试
+
+这组测试不属于默认 CTest。建议在虚拟环境中安装依赖：
 
 ```bash
-cd mcp_server/test
-pip install -r requirements.txt
-python3 test-client-stdio.py configuration-stdio-linux.json
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r tests/manual/requirements.txt
+
+# STDIO
+python3 tests/manual/mcp_sdk_stdio_client.py
+
+# SSE：先在另一个终端启动 mcp_server -s
+python3 tests/manual/mcp_sdk_sse_client.py
 ```
 
 ## 开发自定义插件
 
-参见 [docs/mcp-plugin-development.md](docs/mcp-plugin-development.md)。
+参见 [00docs/mcp-plugin-development.md](00docs/mcp-plugin-development.md)。
 
 ## RAG-MCP 详细指南
 
-参见 [docs/rag-mcp-guide.md](docs/rag-mcp-guide.md)。
+参见 [00docs/rag-mcp-guide.md](00docs/rag-mcp-guide.md)。
 
 ## 协议版本
 
