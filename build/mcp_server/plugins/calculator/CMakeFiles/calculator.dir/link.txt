@@ -1,1 +1,1 @@
-/usr/bin/c++ -fPIC -shared -Wl,-soname,libcalculator.so -o libcalculator.so CMakeFiles/calculator.dir/Calculator.cpp.o 
+/usr/bin/clang++ -g -arch arm64 -dynamiclib -Wl,-headerpad_max_install_names -o libcalculator.dylib -install_name @rpath/libcalculator.dylib CMakeFiles/calculator.dir/Calculator.cpp.o

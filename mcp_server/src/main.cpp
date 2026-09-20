@@ -36,12 +36,12 @@
 
 using namespace popl;
 
-std::shared_ptr<vx::mcp::Server> server;
+std::shared_ptr<vx::mcp::Server> server;  //全局 智能指针
 
 struct NotificationState {
     std::mutex serverNotificationMutex;
 };
-NotificationState notificationState;
+NotificationState notificationState;   //全局可用的互斥锁
 
 /// stop handler Ctrl+C
 void stop_handler(sig_atomic_t s) {
@@ -53,9 +53,10 @@ void stop_handler(sig_atomic_t s) {
     exit(0);
 }
 
-/// Notification Implementation from plugins to mcp-client
+
 void ClientNotificationCallbackImpl(const char* pluginName, const char* notification) {
-    std::lock_guard<std::mutex> lock(notificationState.serverNotificationMutex);
+    std::lock_guard<std::mutex> lock(notificationState.serverNotificationMutex);   //lock_guard 是用来自动管理互斥锁（mutex）的 RAII 工具
+    //构造时自动对传入的互斥锁 serverNotificationMutex 加锁；当 lock 出作用域（如函数执行完毕）时，析构函数会自动解锁
     if (server && server->IsValid()) {
         server->SendNotification(pluginName, notification);
     }
@@ -66,7 +67,7 @@ int main(int argc, char **argv) {
     std::string name;
     std::string plugins_directory;
     std::string logs_directory;
-    bool verbose;
+    bool verbose; //日志显示
 
     std::shared_ptr<vx::ITransport> transport;
     auto loader = std::make_shared<vx::mcp::PluginsLoader>();
@@ -130,20 +131,9 @@ int main(int argc, char **argv) {
 
     // Concatenate ISO date to logname
     std::string logFilename = logs_directory + "/mcp-server_" + iso_date + ".log";
-    auto sink_file = std::make_shared<AixLog::SinkFile>(AixLog::Severity::trace, logFilename);
+    std::cerr << "Log file: " << logFilename << std::endl;
+    auto sink_file = std::make_shared<AixLog::SinkFile>(AixLog::Severity::trace, logFilename);  //AixLog轻量级日志
     AixLog::Log::init({sink_file});
-
-    //============================================================================================
-    // print logo and info
-    //============================================================================================
-    LOG(INFO) << " __  __  _____ _____        _____ ______ _______      ________ _____  " << std::endl;
-    LOG(INFO) << "|  \\/  |/ ____|  __ \\      / ____|  ____|  __ \\ \\    / /  ____|  __ \\ " << std::endl;
-    LOG(INFO) << "| \\  / | |    | |__) |____| (___ | |__  | |__) \\ \\  / /| |__  | |__) |" << std::endl;
-    LOG(INFO) << "| |\\/| | |    |  ___/______\\___ \\|  __| |  _  / \\ \\/ / |  __| |  _  / " << std::endl;
-    LOG(INFO) << "| |  | | |____| |          ____) | |____| | \\ \\  \\  /  | |____| | \\ \\ " << std::endl;
-    LOG(INFO) << "|_|  |_|\\_____|_|         |_____/|______|_|  \\_\\  \\/   |______|_|  \\_\\" << std::endl;
-    LOG(INFO) << "Starting mcp-server v" << PROJECT_VERSION << " (transport: " << transport->GetName() << " v" << transport->GetVersion() << ") on port: " << transport->GetPort() << std::endl;
-    LOG(INFO) << "Press Ctrl+C to exit." << std::endl;
 
     //============================================================================================
     // load all plugins from the plugins directory
@@ -156,7 +146,7 @@ int main(int argc, char **argv) {
     // enable notification system
     //============================================================================================
     for (auto& plugin : loader->GetPlugins()) {
-        plugin.instance->notifications = new NotificationSystem();
+        plugin.instance->notifications = new NotificationSystem();    //为每个plugin注册 notification  这里new的东西后面释放了吗
         plugin.instance->notifications->SendToClient = ClientNotificationCallbackImpl;
     }
 
@@ -193,7 +183,7 @@ int main(int argc, char **argv) {
             if (plugin.instance->GetType() == PLUGIN_TYPE_TOOLS) {
                 for (int i = 0; i < plugin.instance->GetToolCount(); i++) {
                     auto pluginTool = plugin.instance->GetTool(i);
-                    if (pluginTool->name == request["params"]["name"]) {
+                    if (pluginTool->name == request["params"]["name"]) {    //找到client请求的tool
                         res_ptr = plugin.instance->HandleRequest(request.dump().c_str());
                         if (res_ptr) {
                             try {

@@ -1,1 +1,1 @@
-/usr/bin/c++ -fPIC -shared -Wl,-soname,libbacio-quote.so -o libbacio-quote.so "CMakeFiles/bacio-quote.dir/BacioQuote.cpp.o" 
+/usr/bin/clang++ -g -arch arm64 -dynamiclib -Wl,-headerpad_max_install_names -o libbacio-quote.dylib -install_name @rpath/libbacio-quote.dylib "CMakeFiles/bacio-quote.dir/BacioQuote.cpp.o"

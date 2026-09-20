@@ -1,8 +1,8 @@
 file(REMOVE_RECURSE
   "CMakeFiles/bacio-quote.dir/BacioQuote.cpp.o"
   "CMakeFiles/bacio-quote.dir/BacioQuote.cpp.o.d"
+  "libbacio-quote.dylib"
   "libbacio-quote.pdb"
-  "libbacio-quote.so"
 )
 
 # Per-language clean rules from dependency scanning.

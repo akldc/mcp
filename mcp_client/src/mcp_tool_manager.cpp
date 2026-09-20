@@ -203,7 +203,7 @@ void MCPToolManager::refreshTools() {
     LOG_INFO("Refreshed " + std::to_string(tools.size()) + " MCP tools");
 }
 
-void MCPToolManager::processNotification(const std::string& plugin_name, const std::string& notification) {
+void MCPToolManager::processNotification(const std::string& plugin_name, const std::string& notification) {   //从Server获取到Notification 某些tool功能发生改变
     LOG_INFO("Received notification from plugin " + plugin_name + ": " + notification);
     
     // 如果通知表明工具列表已更改，刷新工具列表
@@ -235,7 +235,7 @@ bool MCPServiceIntegrator::initialize(const std::string& mcp_server_path,
     // 创建MCP客户端
     mcp_client_ = std::make_shared<MCPClient>();
     
-    // 设置通知回调
+    // 设置通知回调      回调
     mcp_client_->setNotificationCallback([this](const std::string& plugin_name, const std::string& notification) {
         if (tool_manager_) {
             tool_manager_->processNotification(plugin_name, notification);
@@ -270,7 +270,7 @@ void MCPServiceIntegrator::shutdown() {
     
     if (tool_manager_) {
         tool_manager_->shutdown();
-        tool_manager_.reset();
+        tool_manager_.reset();    //reset清空智能指针 释放原对象的所有权 引用计数-1
     }
     
     if (mcp_client_) {

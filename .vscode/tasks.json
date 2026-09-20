@@ -1,0 +1,85 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "MCP: 配置 CMake",
+            "type": "process",
+            "command": "cmake",
+            "args": [
+                "-S",
+                "${workspaceFolder}",
+                "-B",
+                "${workspaceFolder}/.build",
+                "-DCMAKE_BUILD_TYPE=Debug",
+                "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "MCP: 编译客户端库",
+            "type": "process",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/.build",
+                "--target",
+                "mcp_client",
+                "--parallel",
+                "8"
+            ],
+            "dependsOn": "MCP: 配置 CMake",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "MCP: 编译全部",
+            "type": "process",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/.build",
+                "--parallel",
+                "8"
+            ],
+            "dependsOn": "MCP: 配置 CMake",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "MCP: 启动客户端示例 (STDIO)",
+            "type": "shell",
+            "command": "mkdir -p ./logs && ../examples/rag_mcp_example --mcp-server ./mcp_server",
+            "options": {
+                "cwd": "${workspaceFolder}/.build/mcp_server"
+            },
+            "dependsOn": "MCP: 编译全部",
+            "problemMatcher": []
+        },
+        {
+            "label": "MCP: 启动服务器 (STDIO)",
+            "type": "shell",
+            "command": "mkdir -p ./logs && ./mcp_server -p ./plugins -l ./logs",
+            "options": {
+                "cwd": "${workspaceFolder}/.build/mcp_server"
+            },
+            "dependsOn": "MCP: 编译全部",
+            "problemMatcher": []
+        },
+        {
+            "label": "MCP: 启动服务器 (SSE)",
+            "type": "shell",
+            "command": "mkdir -p ./logs && ./mcp_server -s -p ./plugins -l ./logs",
+            "options": {
+                "cwd": "${workspaceFolder}/.build/mcp_server"
+            },
+            "dependsOn": "MCP: 编译全部",
+            "problemMatcher": []
+        }
+    ]
+}

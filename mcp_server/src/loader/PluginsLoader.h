@@ -47,7 +47,7 @@ namespace vx::mcp {
     struct PluginEntry {
         std::string path;
         LibraryHandle handle;
-        PluginAPI* instance;
+        PluginAPI* instance;        //一个结构体指针，里面包含了一堆从动态库加载的 函数指针，还有一个notifications->SendToClient
 
         // Function pointers
         PluginAPI* (*createFunc)();

@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/home/ubuntu/ai/mcp/mcp_server/plugins/notification/Notification.cpp" "mcp_server/plugins/notification/CMakeFiles/notification.dir/Notification.cpp.o" "gcc" "mcp_server/plugins/notification/CMakeFiles/notification.dir/Notification.cpp.o.d"
+  "/Users/song/root/cppproj/mcp/mcp_server/plugins/notification/Notification.cpp" "mcp_server/plugins/notification/CMakeFiles/notification.dir/Notification.cpp.o" "gcc" "mcp_server/plugins/notification/CMakeFiles/notification.dir/Notification.cpp.o.d"
   )
 
 # Targets to which this target links which contain Fortran sources.

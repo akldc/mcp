@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/home/ubuntu/ai/mcp/examples/rag_mcp_example.cpp" "examples/CMakeFiles/rag_mcp_example.dir/rag_mcp_example.cpp.o" "gcc" "examples/CMakeFiles/rag_mcp_example.dir/rag_mcp_example.cpp.o.d"
+  "/Users/song/root/cppproj/mcp/examples/rag_mcp_example.cpp" "examples/CMakeFiles/rag_mcp_example.dir/rag_mcp_example.cpp.o" "gcc" "examples/CMakeFiles/rag_mcp_example.dir/rag_mcp_example.cpp.o.d"
   )
 
 # Targets to which this target links which contain Fortran sources.

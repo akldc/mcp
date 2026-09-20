@@ -93,7 +93,7 @@ namespace vx::mcp {
         }
 
         // Get function pointers
-        entry.createFunc = (PluginAPI * (*)())dlsym(entry.handle, "CreatePlugin");
+        entry.createFunc = (PluginAPI * (*)())dlsym(entry.handle, "CreatePlugin");               //dlsym
         entry.destroyFunc = (void (*)(PluginAPI *))dlsym(entry.handle, "DestroyPlugin");
 #endif
 

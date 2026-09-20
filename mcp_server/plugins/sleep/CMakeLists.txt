@@ -12,12 +12,12 @@ if(MINGW)
     link_libraries(pthread)
 endif()
 
-# Add this to your CMakeLists.txt
+# Add this to your CMakeLists.txt   shared表示共享库 so
 add_library(sleep SHARED
         ${PROJECT_SOURCE_DIR}/plugins/sleep/Sleep.cpp
 )
 
-# For Linux/Unix, ensure we're building with PIC
+# For Linux/Unix, ensure we're building with PIC  共享库通常需要 PIC，因为它会被装载到进程地址空间的任意位置。
 if(UNIX)
     set_target_properties(sleep PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()

@@ -1,1 +1,1 @@
-/usr/bin/c++ -fPIC -shared -Wl,-soname,libcodereview.so -o libcodereview.so CMakeFiles/codereview.dir/CodeReview.cpp.o 
+/usr/bin/clang++ -g -arch arm64 -dynamiclib -Wl,-headerpad_max_install_names -o libcodereview.dylib -install_name @rpath/libcodereview.dylib CMakeFiles/codereview.dir/CodeReview.cpp.o

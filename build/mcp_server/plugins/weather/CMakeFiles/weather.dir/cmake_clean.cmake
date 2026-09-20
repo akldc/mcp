@@ -1,8 +1,8 @@
 file(REMOVE_RECURSE
   "CMakeFiles/weather.dir/Weather.cpp.o"
   "CMakeFiles/weather.dir/Weather.cpp.o.d"
+  "libweather.dylib"
   "libweather.pdb"
-  "libweather.so"
 )
 
 # Per-language clean rules from dependency scanning.

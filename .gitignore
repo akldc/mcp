@@ -1,0 +1,44 @@
+# CMake build trees and generated metadata
+build/
+.build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Compiled objects, libraries and executables
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+test_mcp/test[0-9]
+mcp_server/test/test[0-9]
+
+# Logs and local caches
+logs/
+test_logs/
+*.log
+.cache/
+__pycache__/
+*.py[cod]
+
+# Local configuration and editor state
+.env
+.env.*
+!.env.example
+.venv/
+.idea/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/settings.json
+
+# OS and editor temporary files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

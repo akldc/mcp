@@ -9,7 +9,7 @@
 #include "agent_rpc/mcp/rag/tool_retriever.h"
 #include "agent_rpc/common/logger.h"
 
-#include <nlohmann/json.hpp>
+#include "json.hpp"
 #include <sstream>
 
 using json = nlohmann::json;

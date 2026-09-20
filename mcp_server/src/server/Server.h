@@ -106,13 +106,15 @@ namespace vx::mcp {
 
         std::shared_ptr<ITransport> transport_; // Store transport pointer
         std::queue<std::string> notification_queue_;
+
         std::mutex output_mutex_; // Protects both queue and transport writes
-        std::condition_variable queue_cv_;
+        std::condition_variable queue_cv_;  //控制消息队列 的等待，生产者-消费者模型
+
         std::thread writer_thread_;
         std::atomic<bool> writer_running_{false};
 
         std::thread reader_thread_;
-        std::atomic<bool> reader_running_ = false;
+        std::atomic<bool> reader_running_{false};
     };
 
 }

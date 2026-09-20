@@ -28,6 +28,12 @@
 
 using json = nlohmann::json;
 
+//工具定义
+// 1. 先定义一个PluginTool 包含工具的name,description,schema等
+// 2. 定义一个PluginAPI，并重写其中的函数  PluginAPI是一堆函数指针
+// 3. 通过CreatePlugin返回这个PluginAPI对象
+
+
 static PluginTool methods[] = {
         {
             "sleep",
@@ -89,6 +95,11 @@ const PluginTool* GetToolImpl(int index) {
     if (index < 0 || index >= GetToolCountImpl()) return nullptr;
     return &methods[index];
 }
+
+
+//////
+//////
+//////
 
 static PluginAPI plugin = {
         GetNameImpl,

@@ -279,8 +279,8 @@ private:
     
     // 成员变量
     MCPAgentConfig config_;
-    std::shared_ptr<MCPClient> mcp_client_;
-    std::shared_ptr<MCPToolManager> tool_manager_;
+    std::shared_ptr<MCPClient> mcp_client_;           //client 
+    std::shared_ptr<MCPToolManager> tool_manager_;    //tool manager
     
     // 工具缓存
     std::vector<ToolInfo> tool_cache_;

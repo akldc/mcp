@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/home/ubuntu/ai/mcp/common/src/logger.cpp" "common/CMakeFiles/mcp_common.dir/src/logger.cpp.o" "gcc" "common/CMakeFiles/mcp_common.dir/src/logger.cpp.o.d"
+  "/Users/song/root/cppproj/mcp/common/src/logger.cpp" "common/CMakeFiles/mcp_common.dir/src/logger.cpp.o" "gcc" "common/CMakeFiles/mcp_common.dir/src/logger.cpp.o.d"
   )
 
 # Targets to which this target links which contain Fortran sources.

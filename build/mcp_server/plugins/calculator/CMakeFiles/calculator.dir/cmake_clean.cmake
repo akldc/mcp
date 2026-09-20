@@ -1,8 +1,8 @@
 file(REMOVE_RECURSE
   "CMakeFiles/calculator.dir/Calculator.cpp.o"
   "CMakeFiles/calculator.dir/Calculator.cpp.o.d"
+  "libcalculator.dylib"
   "libcalculator.pdb"
-  "libcalculator.so"
 )
 
 # Per-language clean rules from dependency scanning.

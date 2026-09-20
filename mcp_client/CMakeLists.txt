@@ -22,7 +22,7 @@ target_include_directories(mcp_client PUBLIC
 
 # 查找 jsoncpp
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(JSONCPP REQUIRED jsoncpp)
+pkg_check_modules(JSONCPP REQUIRED IMPORTED_TARGET jsoncpp)
 
 # 链接依赖库
 target_link_libraries(mcp_client PUBLIC
@@ -30,12 +30,12 @@ target_link_libraries(mcp_client PUBLIC
 )
 
 target_link_libraries(mcp_client PRIVATE
-    ${JSONCPP_LIBRARIES}
+    PkgConfig::JSONCPP
     Threads::Threads
     CURL::libcurl
 )
 
-target_include_directories(mcp_client PRIVATE ${JSONCPP_INCLUDE_DIRS})
+target_include_directories(mcp_client PRIVATE ${PROJECT_SOURCE_DIR}/mcp_server/include)
 
 # C++20 标准
 target_compile_features(mcp_client PRIVATE cxx_std_20)

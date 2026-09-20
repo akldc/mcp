@@ -1,8 +1,8 @@
 file(REMOVE_RECURSE
   "CMakeFiles/notification.dir/Notification.cpp.o"
   "CMakeFiles/notification.dir/Notification.cpp.o.d"
+  "libnotification.dylib"
   "libnotification.pdb"
-  "libnotification.so"
 )
 
 # Per-language clean rules from dependency scanning.

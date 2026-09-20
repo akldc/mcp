@@ -9,7 +9,7 @@
 #include "agent_rpc/mcp/rag/vector_index.h"
 #include "agent_rpc/common/logger.h"
 
-#include <nlohmann/json.hpp>
+#include "json.hpp"
 #include <fstream>
 #include <algorithm>
 #include <cmath>

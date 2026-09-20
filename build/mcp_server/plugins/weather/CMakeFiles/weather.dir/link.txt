@@ -1,1 +1,1 @@
-/usr/bin/c++ -fPIC -shared -Wl,-soname,libweather.so -o libweather.so CMakeFiles/weather.dir/Weather.cpp.o 
+/usr/bin/clang++ -g -arch arm64 -dynamiclib -Wl,-headerpad_max_install_names -o libweather.dylib -install_name @rpath/libweather.dylib CMakeFiles/weather.dir/Weather.cpp.o

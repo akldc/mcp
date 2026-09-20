@@ -28,14 +28,15 @@
 #ifdef _WIN32
 #define PLUGIN_API __declspec(dllexport)
 #else
-#define PLUGIN_API __attribute__((visibility("default")))
+#define PLUGIN_API __attribute__((visibility("default")))        // 让函数、类、变量在动态库（.so）中导出符号， 作为插件接口必须加，否则无法通过dlopen,dysym找到
 #endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef void (*ClientNotificationCallback)(const char* pluginName, const char* notification);
+//定义一个函数指针，它的类型 是一个函数，参数是两个const char*，返回值是void
+typedef void (*ClientNotificationCallback)(const char* pluginName, const char* notification);  // define a function pointer type for sending notifications to the client
 
 typedef enum {
     PLUGIN_TYPE_TOOLS = 0,
@@ -66,12 +67,17 @@ typedef struct {
     ClientNotificationCallback SendToClient;    // you should not touch this
 } NotificationSystem;
 
-typedef struct {
+
+//插件通常是动态库.so，主程序和插件可能用不同的编译器编译，跨动态库调用类成员函数可能会出现class ABI不兼容
+//这里使用纯c风格的struct,就是为了避免cpp class ABI不兼容的问题
+//PluginAPI 本质是 “用 C 结构体封装一组 C 风格函数指针”，主程序和插件只要遵守相同的 C ABI 约定，即使编译环境不同，也能正确调用 —— 这是 C++ 类无法做到的。
+//插件只需按约定实现这些函数，并导出一个 “获取 PluginAPI 结构体” 的 C 函数（如 extern "C" PluginAPI* GetPluginAPI()）
+typedef struct {                     
     const char* (*GetName)();
     const char* (*GetVersion)();
     PluginType (*GetType)();
     int (*Initialize)();
-    char* (*HandleRequest)(const char* request);
+    char* (*HandleRequest)(const char* request);  //
     void (*Shutdown)();
     int (*GetToolCount)();
     const PluginTool* (*GetTool)(int index);
@@ -82,7 +88,8 @@ typedef struct {
     NotificationSystem* notifications;
 } PluginAPI;
 
-PLUGIN_API PluginAPI* CreatePlugin();
+//插件工厂函数
+PLUGIN_API PluginAPI* CreatePlugin(); // PLUGIN_API
 PLUGIN_API void DestroyPlugin(PluginAPI*);
 
 #ifdef __cplusplus

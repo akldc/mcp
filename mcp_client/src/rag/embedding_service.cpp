@@ -10,7 +10,7 @@
 #include "agent_rpc/common/logger.h"
 
 #include <curl/curl.h>
-#include <nlohmann/json.hpp>
+#include "json.hpp"
 #include <cstdlib>
 #include <cmath>
 #include <thread>

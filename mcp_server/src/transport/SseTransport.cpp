@@ -52,7 +52,7 @@ namespace vx::transport {
         SSE::Stop();
     }
 
-    std::pair<size_t, std::string> SSE::Read() {
+    std::pair<size_t, std::string> SSE::Read() {                        // 从incoming 拿
         std::unique_lock<std::mutex> lock(incoming_mutex_);
 
         LOG(TRACE) << "WAITING FOR LOCK TO BE RELEASED" << std::endl;
@@ -78,7 +78,7 @@ namespace vx::transport {
         }
     }
 
-    void SSE::Write(const std::string& json_data) {
+    void SSE::Write(const std::string& json_data) {            //向outgoing写， 通知HandleSSEConnection向client写
         LOG(TRACE) << "RequestHandler delegated = " << json_data << std::endl;
         LOG(TRACE) << "is_client_connected = " << client_connected_.load() << std::endl;
         if (!client_connected_.load()) {
@@ -160,12 +160,12 @@ namespace vx::transport {
             HandlePostMessage(req, res);
         });
 
-        server_->Get("/sse", [this](const httplib::Request& req, httplib::Response& res) {
+        server_->Get("/sse", [this](const httplib::Request& req, httplib::Response& res) {    // client 首先 GET /sse 建立连接
             HandleSSEConnection(req, res);
         });
     }
 
-    void SSE::HandleSSEConnection(const httplib::Request& req, httplib::Response& res) {
+    void SSE::HandleSSEConnection(const httplib::Request& req, httplib::Response& res) {              //检查到outgoing不空,就向client写
         LOG(DEBUG) << "SSE client connected" << std::endl;
         LOG(DEBUG) << "Request headers:" << std::endl;
         for (const auto &header: req.headers) {
@@ -185,7 +185,7 @@ namespace vx::transport {
         client_connected_.store(true);
         sse_active_.store(true);
 
-        res.set_content_provider(
+        res.set_content_provider(     //流式发送，sse就是这样的
             "text/event-stream",
             [this](size_t offset, httplib::DataSink& sink) -> bool {
                 using clock = std::chrono::steady_clock;
@@ -206,7 +206,7 @@ namespace vx::transport {
                         first_call = false;
 
                         std::string sessionId = vx::utils::SessionBuilder::GenerateUniqueSessionID();
-                        std::string event_endpoint = "event: endpoint\ndata: /messages?session_id=" + sessionId + "\n\n";
+                        std::string event_endpoint = "event: endpoint\ndata: /messages?session_id=" + sessionId + "\n\n";     // 向client下发endpoint，告诉要通过 POST /messages?session_id=xxx 来请求 sessionid用来区分多个client连接
                         if (!sink.write(event_endpoint.data(), event_endpoint.size())) {
                             LOG(ERROR) << "Failed to write event_endpoint message" << std::endl;
                             return terminate();
@@ -262,7 +262,7 @@ namespace vx::transport {
                         }
                     }
 
-                    return true; // continue streaming
+                    return true; // continue streaming   只要这个 lambda 返回 true，sse流就继续；返回 false，连接结束。
                 } catch (const std::exception& ex) {
                     LOG(ERROR) << "Exception in SSE content provider: " << ex.what() << std::endl;
                     return terminate();
@@ -274,7 +274,7 @@ namespace vx::transport {
         );
     }
 
-    void SSE::HandlePostMessage(const httplib::Request& req, httplib::Response& res) {
+    void SSE::HandlePostMessage(const httplib::Request& req, httplib::Response& res) {                 //收到post消息，向incoming写，通知read可以读了
         SetCORSHeaders(res);
 
         if (!client_connected_.load()) {

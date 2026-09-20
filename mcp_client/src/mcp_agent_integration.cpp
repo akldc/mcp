@@ -11,7 +11,7 @@
 #include "agent_rpc/mcp/rag/tool_retriever.h"
 #include "agent_rpc/common/logger.h"
 
-#include <nlohmann/json.hpp>
+#include "json.hpp"
 #include <chrono>
 #include <thread>
 #include <cstdlib>
@@ -59,7 +59,7 @@ bool MCPAgentIntegration::initialize(const MCPAgentConfig& config) {
     }
     
     // 更新工具缓存
-    updateToolCache();
+    updateToolCache();   //关键
     
     // 初始化 RAG-MCP (如果启用)
     if (config_.rag_config.enabled) {

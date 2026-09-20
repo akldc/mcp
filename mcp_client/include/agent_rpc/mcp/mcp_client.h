@@ -44,7 +44,7 @@ struct MCPResource {
     std::string mime_type;
 };
 
-// MCP请求/响应
+// MCP请求/响应  和jsonrpc就差一个 jsonrpc2.0
 struct MCPRequest {
     std::string method;
     std::string params;
@@ -140,7 +140,7 @@ private:
     bool startMCPServer();
     void stopMCPServer();
     bool sendRequestStdio(const MCPRequest& request);
-    void processNotificationsStdio();
+    void processNotificationsStdio();                              // 核心 读管道
     
     // SSE 模式
     bool connectSSE();
@@ -190,7 +190,7 @@ private:
     std::shared_ptr<common::Logger> logger_;
 };
 
-// MCP工具管理器
+// MCP工具管理器  —— 为client 管理Server的tools  tools的注册和执行
 class MCPToolManager {
 public:
     MCPToolManager(std::shared_ptr<IMCPClient> mcp_client);
@@ -205,7 +205,7 @@ public:
     bool isToolAvailable(const std::string& tool_name) const;
     
     // 工具调用
-    MCPResponse executeTool(const std::string& tool_name, const std::string& arguments);
+    MCPResponse executeTool(const std::string& tool_name, const std::string& arguments);  //调用client的 callTool()
     
     // 异步工具调用
     void executeToolAsync(const std::string& tool_name, 
@@ -216,18 +216,22 @@ public:
     bool validateToolArguments(const std::string& tool_name, const std::string& arguments) const;
 
     // 内部方法（供 MCPServiceIntegrator 使用）
-    void refreshTools();
+    void refreshTools();    //调用client的list_tools
     void processNotification(const std::string& plugin_name, const std::string& notification);
 
 private:
-    std::shared_ptr<IMCPClient> mcp_client_;
+    std::shared_ptr<IMCPClient> mcp_client_;    //通过MCPClient::listTools()获取tools 写入available_tools_和tool_map_
     std::vector<MCPTool> available_tools_;
     std::map<std::string, MCPTool> tool_map_;
     mutable std::mutex tools_mutex_;
     std::atomic<bool> initialized_{false};
 };
 
-// MCP服务集成器
+// MCP服务集成器  —— 整个MCP系统的入口，包括
+// 创建MCPClient
+// 创建MCPToolManager
+// 连接Server
+// 加载tools
 class MCPServiceIntegrator {
 public:
     MCPServiceIntegrator();

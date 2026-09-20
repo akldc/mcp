@@ -1,1 +1,1 @@
-/usr/bin/c++ -fPIC -shared -Wl,-soname,libsleep.so -o libsleep.so CMakeFiles/sleep.dir/Sleep.cpp.o 
+/usr/bin/clang++ -g -arch arm64 -dynamiclib -Wl,-headerpad_max_install_names -o libsleep.dylib -install_name @rpath/libsleep.dylib CMakeFiles/sleep.dir/Sleep.cpp.o

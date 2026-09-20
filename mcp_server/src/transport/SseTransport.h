@@ -76,8 +76,8 @@ namespace vx::transport {
 
     private:
         void SetupRoutes();
-        void HandleSSEConnection(const httplib::Request& req, httplib::Response& res);
-        void HandlePostMessage(const httplib::Request& req, httplib::Response& res);
+        void HandleSSEConnection(const httplib::Request& req, httplib::Response& res);    //  处理client的get请求 用于建立连接
+        void HandlePostMessage(const httplib::Request& req, httplib::Response& res);      //  处理client的post请求
 
         static void HandleOptionsRequest(const httplib::Request& req, httplib::Response& res);
         static void SetCORSHeaders(httplib::Response& res);
