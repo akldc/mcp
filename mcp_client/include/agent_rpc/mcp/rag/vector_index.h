@@ -163,7 +163,7 @@ public:
     void setVersion(const std::string& version) { version_ = version; }
 
 private:
-    std::unordered_map<std::string, IndexedTool> tools_;
+    std::unordered_map<std::string, IndexedTool> tools_;  // 工具名称 -> 工具信息
     mutable std::mutex mutex_;
     std::string version_ = "1.0";
 };

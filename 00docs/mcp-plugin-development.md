@@ -47,7 +47,7 @@ cd my_plugin
 // MyPlugin.h
 #pragma once
 
-#include "../../include/PluginAPI.h"
+#include "PluginAPI.h"
 
 class MyPlugin {
 public:
@@ -89,7 +89,7 @@ const char* MyPlugin::GetVersion() {
 }
 
 PluginType MyPlugin::GetType() {
-    return PluginType::TOOL;  // 或 RESOURCE, BOTH
+    return PLUGIN_TYPE_TOOLS;
 }
 
 int MyPlugin::Initialize() {
@@ -109,7 +109,13 @@ int MyPlugin::Initialize() {
     })";
     g_tools.push_back(tool);
     
-    return 0;  // 成功
+    return 1;  // 非 0 表示成功
+}
+
+char* CopyResult(const std::string& value) {
+    char* result = new char[value.size() + 1];
+    std::memcpy(result, value.c_str(), value.size() + 1);
+    return result;
 }
 
 char* MyPlugin::HandleRequest(const char* request) {
@@ -117,7 +123,7 @@ char* MyPlugin::HandleRequest(const char* request) {
     Json::Reader reader;
     
     if (!reader.parse(request, root)) {
-        return strdup(R"({"error": "Invalid JSON"})");
+        return CopyResult(R"({"error": "Invalid JSON"})");
     }
     
     std::string method = root["method"].asString();
@@ -135,11 +141,11 @@ char* MyPlugin::HandleRequest(const char* request) {
             result["content"][0]["text"] = "处理结果: " + param1;
             
             Json::FastWriter writer;
-            return strdup(writer.write(result).c_str());
+            return CopyResult(writer.write(result));
         }
     }
     
-    return strdup(R"({"error": "Unknown method"})");
+    return CopyResult(R"({"error": "Unknown method"})");
 }
 
 void MyPlugin::Shutdown() {
@@ -177,8 +183,11 @@ extern "C" {
         api.Shutdown = MyPlugin::Shutdown;
         api.GetToolCount = MyPlugin::GetToolCount;
         api.GetTool = MyPlugin::GetTool;
+        api.GetPromptCount = nullptr;
+        api.GetPrompt = nullptr;
         api.GetResourceCount = MyPlugin::GetResourceCount;
         api.GetResource = MyPlugin::GetResource;
+        api.notifications = nullptr;
         return &api;
     }
     
@@ -195,7 +204,7 @@ extern "C" {
 cmake_minimum_required(VERSION 3.10)
 project(my_plugin)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 find_package(PkgConfig REQUIRED)
@@ -232,7 +241,11 @@ make
 
 ```bash
 # 复制到 plugins 目录
-cp libmy_plugin.so ../../build/plugins/
+mkdir -p ../../build/mcp_server/plugins/my_plugin
+cp libmy_plugin.so ../../build/mcp_server/plugins/my_plugin/
+
+# 通知运行中的 Server 全量重载（Linux/macOS）
+kill -HUP <mcp_server_pid>
 ```
 
 ## 插件 API 详解
@@ -256,12 +269,20 @@ struct PluginAPI {
     // 工具相关
     int (*GetToolCount)();
     const PluginTool* (*GetTool)(int index);
+
+    // 提示相关
+    int (*GetPromptCount)();
+    const PluginPrompt* (*GetPrompt)(int index);
     
     // 资源相关
     int (*GetResourceCount)();
     const PluginResource* (*GetResource)(int index);
+
+    NotificationSystem* notifications;
 };
 ```
+
+动态库必须以统一 C ABI 导出 `extern "C" CreatePlugin/DestroyPlugin`。`HandleRequest` 返回值必须使用 `new[]` 分配，因为 Server 会在解析后使用 `delete[]` 释放。收到 `SIGHUP` 后，Server 会等待所有存量插件调用结束，再依次执行 `Shutdown → DestroyPlugin → dlclose`；因此 `Shutdown` 必须停止插件自行创建的后台线程，且不能让后台线程在返回后继续访问插件代码。
 
 ### PluginTool 结构
 

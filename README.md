@@ -43,6 +43,7 @@ mcp_standalone/
 │   │   │   ├── ITransport.h    # 传输接口
 │   │   │   └── PluginAPI.h     # 插件 API
 │   │   ├── loader/             # 插件加载器
+│   │   ├── manager/            # 插件生命周期与工具/资源/提示注册表
 │   │   └── utils/              # 工具类
 │   ├── plugins/                # 内置插件
 │   │   ├── calculator/         # 计算器
@@ -58,6 +59,7 @@ mcp_standalone/
 ├── tests/                      # 可由 CTest 运行的自动测试
 │   ├── integration/
 │   │   ├── mcp_client_stdio_test.cpp
+│   │   ├── plugin_reload_concurrency_test.cpp
 │   │   └── test_server_stdio.py
 │   └── manual/                 # Python MCP SDK 手工互操作测试
 └── 00docs/                     # 详细文档
@@ -95,6 +97,7 @@ mcp_standalone/
 完整的 MCP 服务器实现（MIT License, by Giuseppe Mastrangelo）：
 
 - 插件化架构，支持动态加载 `.so` 插件
+- Linux/macOS 支持通过 `SIGHUP` 全量热重载插件
 - 三种传输模式：STDIO / SSE / HTTP Stream
 - 内置 6 个示例插件
 - 跨平台支持（Linux / macOS / Windows）
@@ -145,6 +148,16 @@ cmake -S . -B build -DBUILD_TESTING=OFF
 # SSE 模式
 ./build/mcp_server/mcp_server -s -p ./build/mcp_server/plugins
 ```
+
+### 热重载插件（Linux/macOS）
+
+重新编译或替换插件动态库后，向 MCP Server 进程发送 `SIGHUP`：
+
+```bash
+kill -HUP <mcp_server_pid>
+```
+
+信号处理函数只设置重载标志。Server 的维护线程在正常执行上下文中检测该标志，禁止新插件调用进入，等待正在执行的调用结束，然后按“注销注册表 → Shutdown → DestroyPlugin → `dlclose` → 重新扫描并加载 → 重新注册”完成全量重载。维护线程通过 condition variable 定时等待，不进行 busy wait，因此 STDIO Server 空闲时也能及时重载。
 
 ### 运行 C++ 示例
 
@@ -216,11 +229,12 @@ std::string json = mcp.getRelevantToolsAsJson("查询天气");
 ctest --test-dir build --output-on-failure
 ```
 
-当前包含两项集成测试：
+当前包含三项集成测试：
 
 | 测试 | 覆盖范围 |
 |------|----------|
 | `mcp_client_stdio` | C++ `MCPClient` 启动 Server、发现工具并调用 calculator |
+| `plugin_reload_concurrency` | reload 阻止新调用，并等待长耗时存量调用结束后重新加载 |
 | `mcp_server_stdio_protocol` | 原始 JSON-RPC initialize、ping、tools/list、calculator、sleep 和错误处理 |
 
 也可以用统一脚本完成配置、构建和测试：

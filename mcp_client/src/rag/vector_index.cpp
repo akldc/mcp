@@ -84,6 +84,12 @@ std::vector<SearchResult> VectorIndex::search(
     const std::vector<float>& query_embedding,
     int top_k,
     float threshold) const {
+
+    // 非法或无意义的 K 直接返回空结果，避免负数在 resize 时
+    // 转换为巨大的 size_t 并触发异常分配。
+    if (top_k <= 0) {
+        return {};
+    }
     
     std::lock_guard<std::mutex> lock(mutex_);
     

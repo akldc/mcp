@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import queue
+import signal
 import subprocess
 import sys
 import threading
@@ -80,8 +81,14 @@ def rpc(method, request_id, params=None):
 
 
 def run(args):
-    server = ServerProcess(args.server, args.plugins, args.logs)
+    plugin_suffix = ".dylib" if sys.platform == "darwin" else ".so"
+    broken_plugin = os.path.join(args.plugins, "intentionally-broken" + plugin_suffix)
+    with open(broken_plugin, "w", encoding="utf-8") as file:
+        file.write("not a dynamic library\n")
+
+    server = None
     try:
+        server = ServerProcess(args.server, args.plugins, args.logs)
         initialized = server.request(rpc("initialize", "init", {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
@@ -98,6 +105,29 @@ def run(args):
         tools = listed.get("result", {}).get("tools", [])
         require(any(tool.get("name") == "calculator" for tool in tools),
                 "calculator missing from tools/list")
+
+        prompts_response = server.request(rpc("prompts/list", "prompts"))
+        prompts = prompts_response.get("result", {}).get("prompts", [])
+        require(any(prompt.get("name") == "code-review" for prompt in prompts),
+                "code-review missing from prompts/list")
+
+        resources_response = server.request(rpc("resources/list", "resources"))
+        resources = resources_response.get("result", {}).get("resources", [])
+        require(any(resource.get("uri") == "bacio:///quote" for resource in resources),
+                "bacio quote missing from resources/list")
+
+        prompt_result = server.request(rpc("prompts/get", "prompt-get", {
+            "name": "code-review",
+            "arguments": {"language": "cpp", "code": "int main(){}"},
+        }))
+        require("result" in prompt_result,
+                f"prompts/get failed: {prompt_result}")
+
+        resource_result = server.request(rpc("resources/read", "resource-read", {
+            "uri": "bacio:///quote",
+        }))
+        require("result" in resource_result,
+                f"resources/read failed: {resource_result}")
 
         calculated = server.request(rpc("tools/call", "calculator", {
             "name": "calculator",
@@ -124,8 +154,51 @@ def run(args):
         }))
         require(missing.get("result", {}).get("isError") is True,
                 "missing tool did not return isError=true")
+
+        if hasattr(signal, "SIGHUP"):
+            sleep_result = {}
+            sleep_error = []
+
+            def call_sleep_during_reload():
+                try:
+                    sleep_result.update(server.request(rpc("tools/call", "long-sleep", {
+                        "name": "sleep",
+                        "arguments": {"milliseconds": 250},
+                    })))
+                except Exception as exc:  # surfaced in the main test thread below
+                    sleep_error.append(exc)
+
+            worker = threading.Thread(target=call_sleep_during_reload)
+            worker.start()
+            time.sleep(0.05)
+            os.kill(server.process.pid, signal.SIGHUP)
+            worker.join(timeout=5)
+            require(not worker.is_alive(), "sleep request did not finish during SIGHUP")
+            require(not sleep_error, f"sleep request failed during SIGHUP: {sleep_error}")
+            require(not sleep_result.get("result", {}).get("isError", True),
+                    f"sleep request returned an error during SIGHUP: {sleep_result}")
+
+            after_reload = server.request(rpc("tools/list", "after-reload"))
+            reloaded_tools = after_reload.get("result", {}).get("tools", [])
+            require(any(tool.get("name") == "calculator" for tool in reloaded_tools),
+                    "tools were not available after SIGHUP reload")
+
+            prompts_after_reload = server.request(
+                rpc("prompts/list", "prompts-after-reload"))
+            require(prompts_after_reload.get("result", {}).get("prompts"),
+                    "prompts were not available after SIGHUP reload")
+
+            resources_after_reload = server.request(
+                rpc("resources/list", "resources-after-reload"))
+            require(resources_after_reload.get("result", {}).get("resources"),
+                    "resources were not available after SIGHUP reload")
     finally:
-        server.stop()
+        if server is not None:
+            server.stop()
+        try:
+            os.remove(broken_plugin)
+        except FileNotFoundError:
+            pass
 
 
 def main():

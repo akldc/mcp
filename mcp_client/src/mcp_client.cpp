@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <sstream>
 #include <fstream>
+#include <algorithm>
 #include <json/json.h>
 #include <ctime>
 #include <curl/curl.h>
@@ -628,140 +629,68 @@ MCPResponse MCPClient::parseJSONRPCResponse(const std::string& response) {
 // ============================================================================
 
 bool MCPClient::connectSSE() {
-    // 初始化 CURL
-    curl_global_init(CURL_GLOBAL_ALL);
-    curl_handle_ = curl_easy_init();
-    
-    if (!curl_handle_) {
-        LOG_ERROR("Failed to initialize CURL for SSE");
+    if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+        LOG_ERROR("Failed to initialize libcurl for SSE");
         return false;
     }
-    
-    // 发送初始化请求获取 session ID
-    CURL* curl = static_cast<CURL*>(curl_handle_);
-    
-    // 构建初始化 URL
-    std::string init_url = config_.sse_url;
-    if (init_url.back() != '/') {
-        init_url += "/";
+
+    running_ = true;
+    clearSSESession();
+    sse_event_thread_ = std::thread([this] { processNotificationsSSE(); });
+
+    std::unique_lock<std::mutex> lock(sse_mutex_);
+    const auto timeout = std::chrono::milliseconds(
+        config_.connect_timeout_ms > 0 ? config_.connect_timeout_ms : 5000);
+    if (sse_cv_.wait_for(lock, timeout, [this] {
+            return !sse_message_endpoint_.empty() || !running_.load();
+        })) {
+        LOG_INFO("SSE connection established, session: " + sse_session_id_);
+        return !sse_message_endpoint_.empty();
     }
-    init_url += "sse";
-    
-    curl_easy_setopt(curl, CURLOPT_URL, init_url.c_str());        // 建立sse连接
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, sseWriteCallback);                    // 每当 server 发来数据 → curl 调用这个函数   :当 libcurl 从网络上读到响应体数据时,回调这个函数，把数据块交给你处理。
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, this);    //向sseWriteCallback 传入user_data: this
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, sseHeaderCallback);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, this);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, config_.connect_timeout_ms / 1000);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, config_.connect_timeout_ms / 1000);
-    
-    // 设置 API Key（如果有）
-    struct curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Accept: text/event-stream");     // 设置http头，告诉server 这是sse不是普通http
-    headers = curl_slist_append(headers, "Cache-Control: no-cache");
-    if (!config_.api_key.empty()) {
-        std::string auth_header = "Authorization: Bearer " + config_.api_key;
-        headers = curl_slist_append(headers, auth_header.c_str());
-    }
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    
-    // SSL 验证
-    if (!config_.verify_ssl) {
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-    }
-    
-    // 执行请求获取 session
-    sse_response_buffer_.clear();
-    CURLcode res = curl_easy_perform(curl);           // 获取第一次res session id
-    
-    curl_slist_free_all(headers);
-    
-    if (res != CURLE_OK) {
-        LOG_ERROR("SSE connection failed: " + std::string(curl_easy_strerror(res)));
-        curl_easy_cleanup(curl);
-        curl_handle_ = nullptr;
-        return false;
-    }
-    
-    // 解析 session ID
-    if (sse_session_id_.empty()) {
-        // 尝试从响应中解析
-        try {
-            Json::Value root;
-            Json::Reader reader;
-            if (reader.parse(sse_response_buffer_, root)) {
-                if (root.isMember("sessionId")) {
-                    sse_session_id_ = root["sessionId"].asString();
-                }
-            }
-        } catch (...) {
-            // 忽略解析错误
-        }
-    }
-    
-    // 启动 SSE 事件监听线程
-    sse_event_thread_ = std::thread([this]() {
-        processNotificationsSSE();
-    });
-    
-    LOG_INFO("SSE connection established, session: " + sse_session_id_);
-    return true;
+    lock.unlock();
+    LOG_ERROR("Timed out waiting for the SSE endpoint event");
+    disconnectSSE();
+    return false;
 }
 
 void MCPClient::disconnectSSE() {
     running_ = false;
-    
+    sse_cv_.notify_all();
     if (sse_event_thread_.joinable()) {
         sse_event_thread_.join();
     }
-    
-    if (curl_handle_) {
-        curl_easy_cleanup(static_cast<CURL*>(curl_handle_));
-        curl_handle_ = nullptr;
-    }
-    
+    clearSSESession();
     curl_global_cleanup();
-    sse_session_id_.clear();
-    
     LOG_INFO("SSE connection closed");
 }
 
+// POST 发送 MCP json-rpc 请求
 bool MCPClient::sendRequestSSE(const MCPRequest& request) {
-    if (!curl_handle_) {
-        LOG_ERROR("SSE not connected");
+    std::string post_url;
+    {
+        std::lock_guard<std::mutex> lock(sse_mutex_);
+        post_url = sse_message_endpoint_;
+    }
+    if (!running_.load() || post_url.empty()) {
+        LOG_ERROR("SSE endpoint is not available");
         return false;
     }
-    
-    // 创建新的 CURL handle 用于 POST 请求
+
     CURL* curl = curl_easy_init();
     if (!curl) {
         LOG_ERROR("Failed to create CURL handle for SSE request");
         return false;
     }
-    
-    // 构建请求 URL
-    std::string post_url = config_.sse_url;
-    if (post_url.back() != '/') {
-        post_url += "/";
-    }
-    post_url += "messages";
-    
-    // 如果有 session ID，添加到 URL
-    if (!sse_session_id_.empty()) {
-        post_url += "?session_id=" + sse_session_id_;
-    }
-    
-    // 构建 JSON-RPC 请求
+
     std::string json_request = buildJSONRPCRequest(request);
-    
     curl_easy_setopt(curl, CURLOPT_URL, post_url.c_str());
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_request.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, json_request.length());
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, config_.request_timeout_ms / 1000);
-    
-    // 设置响应回调
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(config_.request_timeout_ms));
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, static_cast<long>(config_.connect_timeout_ms));
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
     std::string response_data;
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, 
         +[](char* ptr, size_t size, size_t nmemb, void* userdata) -> size_t {
@@ -769,9 +698,7 @@ bool MCPClient::sendRequestSSE(const MCPRequest& request) {
             data->append(ptr, size * nmemb);
             return size * nmemb;
         });
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
-    
-    // 设置请求头
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);  // 调上面 callback 的时候，把 &response_data 当 userdata 传进去
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     if (!config_.api_key.empty()) {
@@ -779,35 +706,25 @@ bool MCPClient::sendRequestSSE(const MCPRequest& request) {
         headers = curl_slist_append(headers, auth_header.c_str());
     }
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    
-    // SSL 验证
     if (!config_.verify_ssl) {
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     }
     
-    // 执行请求
-    CURLcode res = curl_easy_perform(curl);               
-    
+    const CURLcode res = curl_easy_perform(curl);  // 真正发送请求，默认阻塞
+    long http_status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);  // 获取响应状态吗
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
-    
-    if (res != CURLE_OK) {
+    if (res != CURLE_OK || http_status < 200 || http_status >= 300) {
         LOG_ERROR("SSE request failed: " + std::string(curl_easy_strerror(res)));
         return false;
     }
-    
-    // 解析响应并放入队列
-    if (!response_data.empty()) {
-        MCPResponse response = parseJSONRPCResponse(response_data);
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        response_queue_.push(response);
-        queue_cv_.notify_one();
-    }
-    
+    // POST only acknowledges receipt. JSON-RPC responses always arrive on SSE.
     return true;
 }
 
+// 从响应队列中拿取响应
 MCPResponse MCPClient::receiveResponseSSE() {
     std::unique_lock<std::mutex> lock(queue_mutex_);
     
@@ -826,139 +743,197 @@ MCPResponse MCPClient::receiveResponseSSE() {
     return timeout_response;
 }
 
+// 长期连接 sse, 不断接收服务器推送的数据
 void MCPClient::processNotificationsSSE() {
-    if (!curl_handle_) {
-        return;
-    }
-    
-    // 创建 SSE 监听连接
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        LOG_ERROR("Failed to create CURL handle for SSE events");
-        return;
-    }
-    
-    // 构建 SSE 事件 URL
-    std::string sse_url = config_.sse_url;
-    if (sse_url.back() != '/') {
-        sse_url += "/";
-    }
-    sse_url += "sse";
-    if (!sse_session_id_.empty()) {
-        sse_url += "?session_id=" + sse_session_id_;
-    }
-    
-    curl_easy_setopt(curl, CURLOPT_URL, sse_url.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, sseWriteCallback); 
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, this);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);  // 无超时，持续监听
-    
-    // 设置请求头
-    struct curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Accept: text/event-stream");
-    headers = curl_slist_append(headers, "Cache-Control: no-cache");
-    if (!config_.api_key.empty()) {
-        std::string auth_header = "Authorization: Bearer " + config_.api_key;
-        headers = curl_slist_append(headers, auth_header.c_str());
-    }
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    
-    // SSL 验证
-    if (!config_.verify_ssl) {
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-    }
-    
-    // 执行 SSE 监听（阻塞直到连接关闭或 running_ 变为 false）
-    while (running_) {
-        CURLcode res = curl_easy_perform(curl);                          //
-        if (res != CURLE_OK && running_) {
-            LOG_WARN("SSE connection interrupted: " + std::string(curl_easy_strerror(res)));
-            // 短暂等待后重连
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+    // Reconnect is transport reconnect, not session resume: every GET /sse
+    // gets a new endpoint and invalidates the old session on the server.
+    unsigned int backoff_seconds = 1;  // 断线重连的退避时间
+    while (running_.load()) {    // 每一次循环都是一次 SSE 连接，连接断开后，重新连接
+        clearSSESession();
+
+        CURL* curl = curl_easy_init();  // 一次具体的请求，这里就是 GET /sse
+        CURLM* multi = curl_multi_init();
+        if (!curl || !multi) {
+            if (curl) { curl_easy_cleanup(curl); }
+            if (multi) { curl_multi_cleanup(multi); }
+            LOG_ERROR("Failed to create libcurl SSE handles");
+            running_ = false;
+            sse_cv_.notify_all();
+            return;
         }
+
+        const std::string url = sseStreamUrl();  // 构造url 类似 http://127.0.0.1:8080/sse
+        struct curl_slist* headers = nullptr;
+        headers = curl_slist_append(headers, "Accept: text/event-stream");  // 客户端希望服务器返回 SSE stream，而且不要使用缓存。
+        headers = curl_slist_append(headers, "Cache-Control: no-cache");
+        if (!config_.api_key.empty()) {
+            const std::string auth_header = "Authorization: Bearer " + config_.api_key;
+            headers = curl_slist_append(headers, auth_header.c_str());
+        }
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, sseWriteCallback);  // 关键！！ 设置回调，服务器每推送一部分 SSE 数据过来，libcurl 就调用 sseWriteCallback
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, this); // 将this也就是MCPClient* 传给上一行的回调函数，就是userdata
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, static_cast<long>(config_.connect_timeout_ms));
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+        curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 30L);
+        curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 15L);
+        // The server emits a keepalive every 15 seconds, so this detects a
+        // stalled stream without treating ordinary idle time as a failure.
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 45L);
+        if (!config_.verify_ssl) {
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        }
+
+        curl_multi_add_handle(multi, curl);  // 把这个 GET /sse 请求交给 multi handle 管理
+        int transfers_running = 0;
+        curl_multi_perform(multi, &transfers_running); // transfers_running 是当前正在进行的传输数量（这里只有1/0），libcurl设置的；当连接由于各种原因结束，libcurl会将这个transfer标记为完成，下次执行perform后transfers_running==0
+        while (running_.load() && transfers_running > 0) {  // 如果连接一直正常，永远卡在这个循环
+            int ready = 0;
+            curl_multi_poll(multi, nullptr, 0, 1000, &ready);
+            curl_multi_perform(multi, &transfers_running);
+        }
+
+        CURLcode result = CURLE_OK;
+        int messages = 0;
+        while (CURLMsg* message = curl_multi_info_read(multi, &messages)) {  // 读取transfer结束的原因
+            if (message->msg == CURLMSG_DONE) { result = message->data.result; }
+        }
+        curl_multi_remove_handle(multi, curl);
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        curl_multi_cleanup(multi);
+
+        if (!running_.load()) { break; }
+        bool session_was_established = false;
+        {
+            std::lock_guard<std::mutex> lock(sse_mutex_);
+            session_was_established = !sse_message_endpoint_.empty();
+        }
+        // A stream that reached the endpoint event was a successful
+        // connection. A later disconnect starts a fresh backoff sequence.
+        if (session_was_established) { backoff_seconds = 1; }
+        LOG_WARN("SSE stream ended: " + std::string(curl_easy_strerror(result)) + "; reconnecting");
+        std::unique_lock<std::mutex> lock(sse_mutex_);
+        sse_cv_.wait_for(lock, std::chrono::seconds(backoff_seconds), [this] { return !running_.load(); });  //等待退避时间，下一轮while循环重新建立sse
+        backoff_seconds = std::min(backoff_seconds * 2U, 30U);
     }
-    
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
 }
 
+// libcurl 回调函数，每当服务器推送 SSE 数据过来，libcurl 就调用这个函数
+// 将一次sse收到的数据追加到缓存；然后检查‘\n\n‘,切分出来完整的event，交给processSSEEvent处理
 size_t MCPClient::sseWriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata) {    // llbcurl规定的函数回调函数签名
     MCPClient* client = static_cast<MCPClient*>(userdata);
     size_t total_size = size * nmemb;
-    
-    std::string data(ptr, total_size);
-    client->sse_response_buffer_ += data;                 // 拼接buffer,SSE 数据可能是“分片到达”的
-    
-    // 解析 SSE 事件
-    size_t pos = 0;
-    while ((pos = client->sse_response_buffer_.find("\n\n")) != std::string::npos) {                //根据\n\n分隔消息
-        std::string event = client->sse_response_buffer_.substr(0, pos);
-        client->sse_response_buffer_.erase(0, pos + 2);
-        
-        // 解析事件数据
-        std::string event_data;
-        std::istringstream iss(event);
-        std::string line;
-        while (std::getline(iss, line)) {
-            if (line.substr(0, 5) == "data:") {
-                event_data = line.substr(5);
-                // 去除前导空格
-                size_t start = event_data.find_first_not_of(" ");
-                if (start != std::string::npos) {
-                    event_data = event_data.substr(start);
-                }
-            } else if (line.substr(0, 3) == "id:") { 
-                // 更新 session ID
-                client->sse_session_id_ = line.substr(3);
-                size_t start = client->sse_session_id_.find_first_not_of(" ");
-                if (start != std::string::npos) {
-                    client->sse_session_id_ = client->sse_session_id_.substr(start);
-                }
-            }
-        }
-        
-        if (!event_data.empty()) {
-            // 解析 JSON-RPC 响应或通知
-            MCPResponse response = client->parseJSONRPCResponse(event_data);    // 解析response
-            
-            if (response.id.empty()) {
-                // 这是一个通知
-                if (client->notification_callback_) {
-                    try {
-                        Json::Value root;
-                        Json::Reader reader;
-                        if (reader.parse(event_data, root)) {
-                            std::string method = root["method"].asString();
-                            if (method == "notifications/message") {
-                                const Json::Value& params = root["params"];
-                                std::string plugin_name = params["pluginName"].asString();
-                                std::string notification = params["notification"].asString();
-                                client->notification_callback_(plugin_name, notification);
-                            }
-                        }
-                    } catch (const std::exception& e) {
-                        LOG_WARN("Failed to parse SSE notification: " + std::string(e.what()));
-                    }
-                }
-            } else {
-                // 这是一个响应
-                std::lock_guard<std::mutex> lock(client->queue_mutex_);
-                client->response_queue_.push(response);
-                client->queue_cv_.notify_one();
-            }
+    std::vector<std::string> complete_events;
+    {
+        std::lock_guard<std::mutex> lock(client->sse_mutex_);
+        client->sse_response_buffer_.append(ptr, total_size);
+        while (true) {
+            const auto lf = client->sse_response_buffer_.find("\n\n");
+            const auto crlf = client->sse_response_buffer_.find("\r\n\r\n");
+            const auto pos = std::min(lf, crlf);
+            if (pos == std::string::npos) { break; }
+            const size_t delimiter_size = pos == crlf ? 4 : 2;
+            complete_events.push_back(client->sse_response_buffer_.substr(0, pos));
+            client->sse_response_buffer_.erase(0, pos + delimiter_size);
         }
     }
-    
+    for (const auto& event : complete_events) { client->processSSEEvent(event); }
     return total_size;
 }
 
-size_t MCPClient::sseHeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata) {
-    // 可以在这里解析响应头
-    return size * nitems;
+void MCPClient::processSSEEvent(const std::string& event) {
+    std::string event_type;
+    std::vector<std::string> data_lines;
+    std::istringstream stream(event);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') { line.pop_back(); }
+        if (line.empty() || line.front() == ':') { continue; } // 遇到:开头直接忽略，一般是:ping, SSE keepalive/comment
+        const auto colon = line.find(':');
+        const std::string field = line.substr(0, colon);
+        std::string value = colon == std::string::npos ? "" : line.substr(colon + 1);
+        if (!value.empty() && value.front() == ' ') { value.erase(0, 1); }
+        if (field == "event") {
+            event_type = value;
+        } else if (field == "data") {
+            data_lines.push_back(std::move(value));
+        }
+    }
+    if (data_lines.empty()) { return; }
+
+    std::string data;
+    for (size_t i = 0; i < data_lines.size(); ++i) {
+        if (i != 0) { data.push_back('\n'); }
+        data += data_lines[i];
+    }
+    if (event_type == "endpoint") {  // 处理 第一次发送GET /sse 后，服务器返回的 endpoint event，里面包含了 session_id 和 message_endpoint
+        const auto session_marker = data.find("session_id=");
+        const std::string session_id = session_marker == std::string::npos
+            ? "" : data.substr(session_marker + std::strlen("session_id="));
+        {
+            std::lock_guard<std::mutex> lock(sse_mutex_);
+            sse_message_endpoint_ = absoluteSSEEndpoint(data);
+            sse_session_id_ = session_id;
+        }
+        sse_cv_.notify_all();
+        return;
+    }
+    processSSEData(data);  // 如果不是endpoint，一般是对某个POST请求的响应，处理data
+}
+
+void MCPClient::processSSEData(const std::string& data) {
+    MCPResponse response = parseJSONRPCResponse(data);
+    if (!response.id.empty()) {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        response_queue_.push(std::move(response));    // 入队
+        queue_cv_.notify_one();
+        return;
+    }
+
+    if (!notification_callback_) { return; }
+    try { // 如果client设置了通知回调,执行；一般是调用tool_manager_->processNotification，用于 refreshTools();（没有实际应用）
+        Json::Value root;
+        Json::Reader reader;
+        if (reader.parse(data, root) && root["method"].asString() == "notifications/message") {
+            const Json::Value& params = root["params"];
+            notification_callback_(params["pluginName"].asString(), params["notification"].asString());
+        }
+    } catch (const std::exception& error) {
+        LOG_WARN("Failed to parse SSE notification: " + std::string(error.what()));
+    }
+}
+
+void MCPClient::clearSSESession() {
+    std::lock_guard<std::mutex> lock(sse_mutex_);
+    sse_session_id_.clear();
+    sse_message_endpoint_.clear();
+    sse_response_buffer_.clear();
+}
+
+std::string MCPClient::sseStreamUrl() const {
+    std::string url = config_.sse_url;
+    while (!url.empty() && url.back() == '/') { url.pop_back(); }
+    if (url.size() >= 4 && url.compare(url.size() - 4, 4, "/sse") == 0) { return url; }
+    return url + "/sse";
+}
+
+std::string MCPClient::absoluteSSEEndpoint(const std::string& endpoint) const {
+    if (endpoint.rfind("http://", 0) == 0 || endpoint.rfind("https://", 0) == 0) { return endpoint; }
+    const std::string stream_url = sseStreamUrl();
+    const auto scheme = stream_url.find("://");
+    const auto path = scheme == std::string::npos ? std::string::npos : stream_url.find('/', scheme + 3);
+    if (!endpoint.empty() && endpoint.front() == '/' && path != std::string::npos) {
+        return stream_url.substr(0, path) + endpoint;
+    }
+    const auto slash = stream_url.rfind('/');
+    return (slash == std::string::npos ? stream_url + "/" : stream_url.substr(0, slash + 1)) + endpoint;
 }
 
 } // namespace mcp
 } // namespace agent_rpc
-
-

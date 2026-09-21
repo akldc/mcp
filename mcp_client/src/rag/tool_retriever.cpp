@@ -11,6 +11,7 @@
 
 #include "json.hpp"
 #include <sstream>
+#include <unordered_set>
 
 using json = nlohmann::json;
 
@@ -87,8 +88,26 @@ void ToolRetriever::indexTools(const std::vector<ToolInfo>& tools) {
     
     LOG_INFO("Indexing " + std::to_string(tools.size()) + " tools");
     
+    std::unordered_set<std::string> current_tool_names;
+    current_tool_names.reserve(tools.size());
+
     for (const auto& tool : tools) {
+        if (tool.name.empty()) {
+            LOG_WARN("Skipping tool with empty name");
+            continue;
+        }
+
+        current_tool_names.insert(tool.name);
         addTool(tool);
+    }
+
+    // indexTools 接收的是 Server 的全量工具快照。同步删除已经下线的工具，
+    // 防止持久化索引或 refresh 后继续召回不可调用的旧工具。
+    for (const auto& indexed_tool : index_->getAllTools()) {
+        if (current_tool_names.find(indexed_tool.name) == current_tool_names.end()) {
+            index_->removeTool(indexed_tool.name);
+            LOG_INFO("Removed stale tool from index: " + indexed_tool.name);
+        }
     }
     
     LOG_INFO("Indexed " + std::to_string(index_->size()) + " tools");
@@ -175,6 +194,11 @@ std::vector<RetrievedTool> ToolRetriever::retrieve(const std::string& query, int
         return {};
     }
     
+    if (top_k <= 0) {
+        LOG_WARN("top_k must be greater than zero");
+        return {};
+    }
+
     if (index_->size() == 0) {
         LOG_WARN("Index is empty, returning empty results");
         return {};
@@ -210,7 +234,9 @@ std::vector<RetrievedTool> ToolRetriever::retrieve(const std::string& query, int
         
     } catch (const std::exception& e) {
         LOG_ERROR("Failed to retrieve tools: " + std::string(e.what()));
-        return {};
+        // 交给集成层区分“正常无匹配”和“检索服务故障”，由集成层执行
+        // 已约定的全量工具降级策略。
+        throw;
     }
 }
 
@@ -276,6 +302,7 @@ CacheStats ToolRetriever::getCacheStats() const {
     return cache_->getStats();
 }
 
+// 缓存更新的时机
 std::vector<float> ToolRetriever::getEmbedding(const std::string& text) {
     // 先检查缓存
     if (cache_) {

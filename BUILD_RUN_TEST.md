@@ -122,6 +122,16 @@ curl --noproxy '*' http://127.0.0.1:8080/health
 
 当前 C++ 客户端主要使用 STDIO；SSE 服务端可做基础 HTTP/SSE 通信，但现有 C++ 客户端的 SSE 连接仍有兼容性问题。
 
+### Linux/macOS 插件热重载
+
+重新编译或替换插件后，向运行中的 Server 发送：
+
+```bash
+kill -HUP <mcp_server_pid>
+```
+
+本版本执行全量重载，不做单插件增量更新或自动回滚。收到信号时只设置 `sig_atomic_t` 标志；真正重载由 Server 的 condition-variable 维护线程在正常执行上下文完成。重载期间新的插件调用会等待，已有调用完成后才会注销、卸载和重新加载动态库。
+
 ## 4. 简单测试
 
 ### 测试一：检查程序和命令行参数
@@ -161,7 +171,7 @@ C++ 示例客户端 -> STDIO -> MCP Server -> 插件加载 -> calculator 工具�
 ctest --test-dir build --output-on-failure
 ```
 
-CTest 会运行两个不依赖网络的集成测试：一个验证 C++ `MCPClient`，另一个直接验证 Server 的 JSON-RPC 协议和插件。
+CTest 会运行三个不依赖网络的集成测试：C++ `MCPClient`、Server JSON-RPC/SIGHUP，以及 PluginManager 等待存量调用的并发重载测试。
 
 ### 测试四：运行项目测试入口
 

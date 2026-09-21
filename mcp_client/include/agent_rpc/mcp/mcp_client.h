@@ -148,8 +148,12 @@ private:
     bool sendRequestSSE(const MCPRequest& request);
     MCPResponse receiveResponseSSE();
     void processNotificationsSSE();
+    void processSSEEvent(const std::string& event);
+    void processSSEData(const std::string& data);
+    void clearSSESession();
+    std::string sseStreamUrl() const;
+    std::string absoluteSSEEndpoint(const std::string& endpoint) const;
     static size_t sseWriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata);
-    static size_t sseHeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata);
     
     // 消息处理
     std::string buildJSONRPCRequest(const MCPRequest& request);
@@ -171,11 +175,12 @@ private:
     int stdout_pipe_{-1};
     
     // SSE 模式相关
-    void* curl_handle_{nullptr};        // CURL handle
-    void* curl_multi_{nullptr};         // CURL multi handle for SSE
     std::string sse_session_id_;        // SSE 会话 ID
-    std::string sse_response_buffer_;   // SSE 响应缓冲
-    std::thread sse_event_thread_;      // SSE 事件监听线程
+    std::string sse_message_endpoint_;  // endpoint event supplied POST URL
+    std::string sse_response_buffer_;   // SSE parser buffer
+    std::mutex sse_mutex_;
+    std::condition_variable sse_cv_;
+    std::thread sse_event_thread_;      // the sole SSE receive/reconnect thread
     
     // 消息队列
     std::queue<MCPResponse> response_queue_;
@@ -265,5 +270,4 @@ private:
 
 } // namespace mcp
 } // namespace agent_rpc
-
 

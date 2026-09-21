@@ -178,6 +178,11 @@ std::string EmbeddingService::sendPostRequest(const std::string& data) {
     
     // 执行请求
     CURLcode res = curl_easy_perform(curl);
+
+    long http_status = 0;
+    if (res == CURLE_OK) {
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
+    }
     
     // 清理
     curl_slist_free_all(headers);
@@ -185,6 +190,11 @@ std::string EmbeddingService::sendPostRequest(const std::string& data) {
     
     if (res != CURLE_OK) {
         throw std::runtime_error(std::string("CURL error: ") + curl_easy_strerror(res));
+    }
+
+    if (http_status < 200 || http_status >= 300) {
+        throw std::runtime_error(
+            "Embedding API HTTP error: " + std::to_string(http_status));
     }
     
     return response_data;

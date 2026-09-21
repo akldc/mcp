@@ -1,36 +1,3 @@
-//  The MIT License
-//
-//  Copyright (C) 2025 Giuseppe Mastrangelo
-//
-//  Permission is hereby granted, free of charge, to any person obtaining
-//  a copy of this software and associated documentation files (the
-//  'Software'), to deal in the Software without restriction, including
-//  without limitation the rights to use, copy, modify, merge, publish,
-//  distribute, sublicense, and/or sell copies of the Software, and to
-//  permit persons to whom the Software is furnished to do so, subject to
-//  the following conditions:
-//
-//  The above copyright notice and this permission notice shall be
-//   included in all copies or substantial portions of the Software.
-//
-//  THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
-//  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-//  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-//  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-//  CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-//  TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-//  SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
-// -----------------------------------------------------------------------------
-//
-//  Contributors:
-//    - Erdenebileg Byamba (https://github.com/erd3n)
-//          * Contribution: Initial implementation of SSE Transport
-//    - Giuseppe Mastrangelo (https://github.com/peppemas)
-//          * Contribution: Fixed code to be compatible with MCP Server specification
-//
-// -----------------------------------------------------------------------------
-
 #include "SseTransport.h"
 
 #include <iostream>
@@ -38,6 +5,7 @@
 #include <chrono>
 #include <utility>
 #include <iomanip>
+#include <cstring>
 
 #include "aixlog.hpp"
 #include "json.hpp"
@@ -52,43 +20,29 @@ namespace vx::transport {
         SSE::Stop();
     }
 
-    std::pair<size_t, std::string> SSE::Read() {                        // 从incoming 拿
+    std::pair<size_t, std::string> SSE::Read() {
         std::unique_lock<std::mutex> lock(incoming_mutex_);
 
-        LOG(TRACE) << "WAITING FOR LOCK TO BE RELEASED" << std::endl;
-        LOG(TRACE) << "incoming_messages_: " << incoming_messages_.empty() << std::endl;
-        LOG(TRACE) << "server_running: " << server_running_.load() << std::endl;
-
-        incoming_cv_.wait(lock, [this]() {
+        incoming_cv_.wait(lock, [this]() { // 等 incoming_messages_ 不为空 或 server_running_ 为 false 时唤醒
             return !incoming_messages_.empty() || !server_running_.load();
         });
-
-        LOG(TRACE) << "LOCK RELEASED" << std::endl;
 
         if (!server_running_.load() && incoming_messages_.empty()) {
             return {0, ""};
         }
 
-        if (!incoming_messages_.empty()) {
-            std::string message = incoming_messages_.front();
-            incoming_messages_.pop();
-            return { message.length(), message };
-        } else {
-            return {0, ""};
-        }
+        std::string message = std::move(incoming_messages_.front());
+        incoming_messages_.pop();
+        return { message.length(), message };
     }
 
-    void SSE::Write(const std::string& json_data) {            //向outgoing写， 通知HandleSSEConnection向client写
-        LOG(TRACE) << "RequestHandler delegated = " << json_data << std::endl;
-        LOG(TRACE) << "is_client_connected = " << client_connected_.load() << std::endl;
-        if (!client_connected_.load()) {
-            return;
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(outgoing_mutex_);
-            outgoing_messages_.push(json_data);
-        }
+    void SSE::Write(const std::string& json_data) {
+        // Hold the session lock while putting a message in the queue so a
+        // closed session cannot leave a message for its successor.
+        std::lock_guard<std::mutex> session_lock(session_mutex_);
+        if (!sse_active_.load()) { return; }
+        std::lock_guard<std::mutex> queue_lock(outgoing_mutex_);
+        outgoing_messages_.push(json_data);
 
         outgoing_cv_.notify_one();
     }
@@ -119,6 +73,8 @@ namespace vx::transport {
             if (!server_->listen(host_.c_str(), port_)) {
                 LOG(ERROR) << "Failed to start SSE server on " << host_ << ":" << port_ << std::endl;
                 server_running_.store(false);
+                incoming_cv_.notify_all();
+                outgoing_cv_.notify_all();
             }
         });
 
@@ -127,24 +83,24 @@ namespace vx::transport {
     }
 
     void SSE::Stop() {
-        if (!server_running_.load()) {
-            return;
-        }
-
         server_running_.store(false);
-        client_connected_.store(false);
-        sse_active_.store(false);
+        std::string session_id;
+        {
+            std::lock_guard<std::mutex> lock(session_mutex_);
+            session_id = active_session_id_;
+        }
+        if (!session_id.empty()) { CloseSession(session_id); }
 
         if (server_) {
             server_->stop();
         }
 
+        incoming_cv_.notify_all();
+        outgoing_cv_.notify_all();
+
         if (server_thread_.joinable()) {
             server_thread_.join();
         }
-
-        incoming_cv_.notify_all();
-        outgoing_cv_.notify_all();
     }
 
     void SSE::SetupRoutes() {
@@ -165,121 +121,90 @@ namespace vx::transport {
         });
     }
 
-    void SSE::HandleSSEConnection(const httplib::Request& req, httplib::Response& res) {              //检查到outgoing不空,就向client写
-        LOG(DEBUG) << "SSE client connected" << std::endl;
-        LOG(DEBUG) << "Request headers:" << std::endl;
-        for (const auto &header: req.headers) {
-            LOG(DEBUG) << " - " << header.first << ": " << header.second << std::endl;
+    void SSE::HandleSSEConnection(const httplib::Request&, httplib::Response& res) {
+        // This is deliberately a single-client transport.  Rejecting a second
+        // stream keeps the session and the two queues unambiguous.
+        const std::string session_id = vx::utils::SessionBuilder::GenerateUniqueSessionID();
+        {
+            std::lock_guard<std::mutex> lock(session_mutex_);
+            if (sse_active_.load()) { // 如果已经sse_active_，说明已经有一个client连接了，拒绝第二个连接
+                res.status = 409;
+                res.set_content("{\"error\":\"An SSE session is already active\"}", "application/json");
+                return;
+            }
+            active_session_id_ = session_id;
+            sse_active_.store(true);
         }
-        LOG(DEBUG) << "Request method: " << req.method << std::endl;
-        LOG(DEBUG) << "Request path: " << req.path << std::endl;
-        LOG(DEBUG) << "Request version: " << req.version << std::endl;
-        LOG(DEBUG) << "Request remote address: " << req.remote_addr << std::endl;
-        LOG(DEBUG) << "Request remote port: " << req.remote_port << std::endl;
+
+        struct SSEConnectionContext {
+            std::string session_id;
+            std::chrono::steady_clock::time_point last_write_time;  // 最后write的时间，用于keepalive
+        };
+        auto context = std::make_shared<SSEConnectionContext>(
+            SSEConnectionContext{session_id, std::chrono::steady_clock::now()});
 
         SetCORSHeaders(res);
-        res.set_header("Content-Type", "text/event-stream");
         res.set_header("Cache-Control", "no-cache");
         res.set_header("Connection", "keep-alive");
-
-        client_connected_.store(true);
-        sse_active_.store(true);
-
-        res.set_content_provider(     //流式发送，sse就是这样的
-            "text/event-stream",
-            [this](size_t offset, httplib::DataSink& sink) -> bool {
-                using clock = std::chrono::steady_clock;
-                static thread_local bool first_call = true;
-                static thread_local auto last_ping = clock::now();
-                const auto ping_interval = std::chrono::seconds(15);
-
-                auto terminate = [this]() -> bool {
-                    sse_active_.store(false);
-                    client_connected_.store(false);
-                    outgoing_cv_.notify_all();
-                    incoming_cv_.notify_all();
-                    return false; // stop content provider
+        res.set_chunked_content_provider("text/event-stream",  // 设置chunked content provider，后续httplib会调用这个lambda函数来写数据
+            [this, context](size_t, httplib::DataSink& sink) -> bool {
+                constexpr auto keepalive_interval = std::chrono::seconds(15);
+                auto terminate = [this, context]() {
+                    CloseSession(context->session_id);
+                    return false;
                 };
 
-                try {
-                    if (first_call) {
-                        first_call = false;
-
-                        std::string sessionId = vx::utils::SessionBuilder::GenerateUniqueSessionID();
-                        std::string event_endpoint = "event: endpoint\ndata: /messages?session_id=" + sessionId + "\n\n";     // 向client下发endpoint，告诉要通过 POST /messages?session_id=xxx 来请求 sessionid用来区分多个client连接
-                        if (!sink.write(event_endpoint.data(), event_endpoint.size())) {
-                            LOG(ERROR) << "Failed to write event_endpoint message" << std::endl;
-                            return terminate();
-                        }
-                        last_ping = clock::now();
-                    }
-
-                    // Periodically send keep-alive to detect broken connection
-                    if (clock::now() - last_ping >= ping_interval) {
-                        // SSE comment line as keep-alive
-                        const char* ping = ": ping\n\n";
-                        // If write fails, client disconnected (e.g., Ctrl+C)
-                        if (!sink.write(ping, std::strlen(ping))) {
-                            LOG(ERROR) << "Keep-alive write failed; client likely disconnected" << std::endl;
-                            return terminate();
-                        }
-                        last_ping = clock::now();
-                    }
-
-                    // If there’s no message soon, re-check writability again
-                    std::unique_lock<std::mutex> lock(outgoing_mutex_);
-                    outgoing_cv_.wait_for(lock, std::chrono::milliseconds(200), [this]() {
-                        return !outgoing_messages_.empty() || !sse_active_.load();
-                    });
-
-                    if (!sse_active_.load()) {
-                        LOG(ERROR) << "SSE connection terminating (inactive)" << std::endl;
-                        return terminate();
-                    }
-
-                    // Before sending, verify connection looks writable
-                    // If the client Ctrl+C'd, this check or the subsequent write will fail.
-                    // Note: is_writable() exists on cpp-httplib DataSink; if missing on your version,
-                    // the failed write below will handle it.
-#ifdef CPPHTTPLIB_HAS_SINK_IS_WRITABLE
-                    if (!sink.is_writable()) {
-                        LOG(DEBUG) << "Sink no longer writable; client likely disconnected" << std::endl;
-                        return terminate();
-                    }
-#endif
-
-                    if (!outgoing_messages_.empty()) {
-                        std::string message = outgoing_messages_.front();
-                        outgoing_messages_.pop();
-                        lock.unlock();
-
-                        std::string sse_msg = "data: " + message + "\n\n";
-                        LOG(DEBUG) << "Sending SSE message: " << message << std::endl;
-
-                        if (!sink.write(sse_msg.data(), sse_msg.size())) {
-                            LOG(ERROR) << "Failed to write SSE message; client disconnected" << std::endl;
-                            return terminate();
-                        }
-                    }
-
-                    return true; // continue streaming   只要这个 lambda 返回 true，sse流就继续；返回 false，连接结束。
-                } catch (const std::exception& ex) {
-                    LOG(ERROR) << "Exception in SSE content provider: " << ex.what() << std::endl;
-                    return terminate();
-                } catch (...) {
-                    LOG(ERROR) << "Unknown exception in SSE content provider" << std::endl;
+                const std::string endpoint = "event: endpoint\ndata: /messages?session_id=" + context->session_id + "\n\n";  // 第一次发送endpoint事件，告诉client后续post消息的url
+                if (!sink.write(endpoint.data(), endpoint.size())) {
+                    LOG(DEBUG) << "Unable to write SSE endpoint event" << std::endl;
                     return terminate();
                 }
-            }
-        );
+                context->last_write_time = std::chrono::steady_clock::now();
+
+                while (server_running_.load() && IsActiveSession(context->session_id)) {
+                    std::string message;
+                    {
+                        std::unique_lock<std::mutex> lock(outgoing_mutex_);
+                        const auto deadline = context->last_write_time + keepalive_interval;
+                        outgoing_cv_.wait_until(lock, deadline, [this]() {
+                            return !outgoing_messages_.empty() || !server_running_.load() || !sse_active_.load();
+                        });
+                        if (!outgoing_messages_.empty()) {
+                            message = std::move(outgoing_messages_.front());
+                            outgoing_messages_.pop();
+                        }
+                    }
+
+                    if (!server_running_.load() || !IsActiveSession(context->session_id)) {
+                        return terminate();
+                    }
+
+                    // is_writable is only an early hint; failed write is the
+                    // authoritative indication that the stream has ended.
+                    if (sink.is_writable && !sink.is_writable()) {
+                        LOG(DEBUG) << "SSE sink is no longer writable" << std::endl;
+                        return terminate();
+                    }
+
+                    const std::string frame = message.empty()
+                        ? ": ping\n\n"                                      // 如果没有消息，说明wait_until超时了，发送ping keepalive
+                        : "data: " + message + "\n\n";
+                    if (!sink.write(frame.data(), frame.size())) {
+                        LOG(DEBUG) << "SSE write failed; closing session" << std::endl;
+                        return terminate();
+                    }
+                    context->last_write_time = std::chrono::steady_clock::now();
+                }
+                return terminate();
+            });
     }
 
     void SSE::HandlePostMessage(const httplib::Request& req, httplib::Response& res) {                 //收到post消息，向incoming写，通知read可以读了
         SetCORSHeaders(res);
 
-        if (!client_connected_.load()) {
-            res.status = 503;
-            res.set_content("{\"error\":\"No SSE connection\"}", "application/json");
+        if (!req.has_param("session_id") || !IsActiveSession(req.get_param_value("session_id"))) {
+            res.status = 409;
+            res.set_content("{\"error\":\"Invalid or inactive SSE session\"}", "application/json");
             return;
         }
 
@@ -299,6 +224,27 @@ namespace vx::transport {
 
         res.status = 200;
         res.set_content("{\"status\":\"received\"}", "application/json");
+    }
+
+    bool SSE::IsActiveSession(const std::string& session_id) const {
+        std::lock_guard<std::mutex> lock(session_mutex_);
+        return sse_active_.load() && !active_session_id_.empty() && active_session_id_ == session_id;
+    }
+
+    void SSE::CloseSession(const std::string& session_id) {
+        {
+            std::lock_guard<std::mutex> lock(session_mutex_);
+            if (active_session_id_ != session_id) { return; }
+            active_session_id_.clear();
+            sse_active_.store(false);
+        }
+        {
+            std::lock_guard<std::mutex> lock(outgoing_mutex_);
+            std::queue<std::string> empty;
+            outgoing_messages_.swap(empty);
+        }
+        incoming_cv_.notify_all();
+        outgoing_cv_.notify_all();
     }
 
     void SSE::HandleOptionsRequest(const httplib::Request& req, httplib::Response& res) {

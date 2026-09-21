@@ -41,6 +41,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <thread>
+#include <string>
 #include <httplib.h>
 #include "utils/SessionBuilder.h"
 
@@ -78,6 +79,8 @@ namespace vx::transport {
         void SetupRoutes();
         void HandleSSEConnection(const httplib::Request& req, httplib::Response& res);    //  处理client的get请求 用于建立连接
         void HandlePostMessage(const httplib::Request& req, httplib::Response& res);      //  处理client的post请求
+        void CloseSession(const std::string& session_id);
+        bool IsActiveSession(const std::string& session_id) const;
 
         static void HandleOptionsRequest(const httplib::Request& req, httplib::Response& res);
         static void SetCORSHeaders(httplib::Response& res);
@@ -85,9 +88,8 @@ namespace vx::transport {
         std::string host_;
         int port_;
         std::unique_ptr<httplib::Server> server_;
-        std::thread server_thread_;
+        std::thread server_thread_;  // Thread for running the SSE server
         std::atomic<bool> server_running_ {false};
-        std::atomic<bool> client_connected_ {false};
 
         // Message queues for bidirectional connections
         std::queue<std::string> incoming_messages_;
@@ -97,7 +99,10 @@ namespace vx::transport {
         std::condition_variable incoming_cv_;
         std::condition_variable outgoing_cv_;
 
-        // SSE connection management
+        // This transport intentionally supports one active SSE session.  The
+        // session id is guarded by session_mutex_; queues belong to that session.
+        mutable std::mutex session_mutex_;
+        std::string active_session_id_;  // 当前活跃的SSE连接的session id, 用于区分不同的client连接
         std::atomic<bool> sse_active_ {false};
     };
 

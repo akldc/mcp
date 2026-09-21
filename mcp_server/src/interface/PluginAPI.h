@@ -71,7 +71,8 @@ typedef struct {
 //插件通常是动态库.so，主程序和插件可能用不同的编译器编译，跨动态库调用类成员函数可能会出现class ABI不兼容
 //这里使用纯c风格的struct,就是为了避免cpp class ABI不兼容的问题
 //PluginAPI 本质是 “用 C 结构体封装一组 C 风格函数指针”，主程序和插件只要遵守相同的 C ABI 约定，即使编译环境不同，也能正确调用 —— 这是 C++ 类无法做到的。
-//插件只需按约定实现这些函数，并导出一个 “获取 PluginAPI 结构体” 的 C 函数（如 extern "C" PluginAPI* GetPluginAPI()）
+// 插件只需按约定实现这些函数，并通过下面的 CreatePlugin/DestroyPlugin
+// 以统一 C ABI 暴露 PluginAPI 函数指针结构体。
 typedef struct {                     
     const char* (*GetName)();
     const char* (*GetVersion)();

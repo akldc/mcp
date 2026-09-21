@@ -29,6 +29,7 @@
 #include <queue>
 #include <thread>
 #include <condition_variable>
+#include <functional>
 #include "ITransport.h"
 #include "json.hpp"
 
@@ -65,10 +66,15 @@ namespace vx::mcp {
         inline void VerboseLevel(int level) { verboseLevel_ = level; }
         inline void Name(const std::string& name) { name_ = name; }
         bool OverrideCallback(const std::string &method, std::function<json(const json&)> function);
+        // server 回调函数，主要用于SIGHUP信号处理，重新加载插件
+        void SetReloadCheckCallback(std::function<void()> callback);
         void SendNotification(const std::string& pluginName, const char* notification);
 
     private:
         void WriterLoop();
+        void StartReloadWatcher();  // 启动reload检查线程，定期调用reload回调函数
+        void StopReloadWatcher();
+        void CheckReloadRequest(); // 安全地调用回调函数
         json HandleRequest(const json& request);
 
         json InitializeCmd(const json& request);
@@ -98,6 +104,11 @@ namespace vx::mcp {
 
     private:
         std::unordered_map<std::string, std::function<json(const json&)>> functionMap;
+        std::function<void()> reload_check_callback_;
+        std::mutex reload_wait_mutex_;
+        std::condition_variable reload_wait_cv_;
+        std::thread reload_watcher_thread_;
+        std::atomic<bool> reload_watcher_running_{false};
 
         bool isStopping_ = false;
         int verboseLevel_ = 0;

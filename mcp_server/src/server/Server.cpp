@@ -119,6 +119,7 @@ namespace vx::mcp {
             LOG(ERROR) << "Failed to start transport: " << transport_->GetName() << std::endl;
             return false;
         }
+        StartReloadWatcher();
 
         while (!isStopping_) {
             auto [length, json_string] = transport->Read();  //从transport读client请求       结构化绑定
@@ -166,6 +167,7 @@ namespace vx::mcp {
         writer_thread_ = std::thread(&Server::WriterLoop, this);
 
         // Start the async reader thread
+        StartReloadWatcher();
         reader_running_ = true;
         reader_thread_ = std::thread([this]() {
             LOG(INFO) << "Async Reader thread started." << std::endl;
@@ -214,6 +216,8 @@ namespace vx::mcp {
         LOG(INFO) << "Stopping server..." << std::endl;
 
         isStopping_ = true;
+
+        StopReloadWatcher();
 
         // Stop transport (SSE shuts server down; stdio can no-op)
         if (transport_) {
@@ -294,6 +298,56 @@ namespace vx::mcp {
             return true;
         }
         return false;
+    }
+
+    void Server::SetReloadCheckCallback(std::function<void()> callback) {
+        reload_check_callback_ = std::move(callback);
+    }
+
+    void Server::StartReloadWatcher() {
+        if (!reload_check_callback_ || reload_watcher_running_.exchange(true)) {
+            return;
+        }
+        reload_watcher_thread_ = std::thread([this]() {
+            LOG(INFO) << "Server reload watcher thread started." << std::endl;
+            std::unique_lock<std::mutex> lock(reload_wait_mutex_);
+            while (reload_watcher_running_.load()) {
+                // Wait for 100ms or until notified to stop
+                reload_wait_cv_.wait_for(lock, std::chrono::milliseconds(100),
+                    [this] { return !reload_watcher_running_.load(); });
+                if (!reload_watcher_running_.load()) {
+                    break;
+                }
+                lock.unlock();
+                CheckReloadRequest(); // 每100ms调用一次重载检查回调函数
+                lock.lock();
+            }
+            LOG(INFO) << "Server reload watcher thread stopped." << std::endl;
+        });
+    }
+
+    void Server::StopReloadWatcher() {
+        reload_watcher_running_ = false;
+        reload_wait_cv_.notify_all();
+        if (reload_watcher_thread_.joinable() &&
+            reload_watcher_thread_.get_id() != std::this_thread::get_id()) {
+            reload_watcher_thread_.join();
+        }
+    }
+
+    void Server::CheckReloadRequest() {
+        if (!reload_check_callback_) {
+            return;
+        }
+        try {
+            reload_check_callback_();
+        } catch (const std::exception& ex) {
+            LOG(ERROR) << "Server reload check callback failed: " << ex.what()
+                       << std::endl;
+        } catch (...) {
+            LOG(ERROR) << "Server reload check callback failed with unknown exception"
+                       << std::endl;
+        }
     }
 
     json Server::InitializeCmd(const json &request) {
@@ -500,6 +554,8 @@ namespace vx::mcp {
 
         isStopping_ = true;
         LOG(INFO) << "Stopping async server..." << std::endl;
+
+        StopReloadWatcher();
 
         // Stop writer thread
         writer_running_ = false;

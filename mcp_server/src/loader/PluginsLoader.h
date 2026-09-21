@@ -1,81 +1,62 @@
-//  The MIT License
-//
-//  Copyright (C) 2025 Giuseppe Mastrangelo
-//
-//  Permission is hereby granted, free of charge, to any person obtaining
-//  a copy of this software and associated documentation files (the
-//  'Software'), to deal in the Software without restriction, including
-//  without limitation the rights to use, copy, modify, merge, publish,
-//  distribute, sublicense, and/or sell copies of the Software, and to
-//  permit persons to whom the Software is furnished to do so, subject to
-//  the following conditions:
-//
-//  The above copyright notice and this permission notice shall be
-//   included in all copies or substantial portions of the Software.
-//
-//  THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
-//  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-//  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-//  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-//  CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-//  TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-//  SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
-
 #ifndef MCP_SERVER_PLUGINS_LOADER_H
 #define MCP_SERVER_PLUGINS_LOADER_H
 
 #ifdef _WIN32
 #include <windows.h>
-typedef HMODULE LibraryHandle;
+using LibraryHandle = HMODULE;
 #else
 #include <dlfcn.h>
-    typedef void* LibraryHandle;
+using LibraryHandle = void*;
 #endif
+
+#include "PluginAPI.h"
+
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include <iostream>
-#include <filesystem>
-#include <algorithm>
-
-#include "aixlog.hpp"
-#include "PluginAPI.h"
 
 namespace vx::mcp {
 
-    struct PluginEntry {
-        std::string path;
-        LibraryHandle handle;
-        PluginAPI* instance;        //一个结构体指针，里面包含了一堆从动态库加载的 函数指针，还有一个notifications->SendToClient
+using CreatePluginFunction = PluginAPI* (*)();
+using DestroyPluginFunction = void (*)(PluginAPI*);
 
-        // Function pointers
-        PluginAPI* (*createFunc)();
-        void (*destroyFunc)(PluginAPI*);
-    };
+// Owns every object whose lifetime is tied to one loaded dynamic library.
+struct PluginInstance {
+    std::string path;
+    LibraryHandle handle = nullptr;
+    PluginAPI* api = nullptr;
+    DestroyPluginFunction destroy_plugin = nullptr;
+    std::unique_ptr<NotificationSystem> notification_system;
 
-    class PluginsLoader {
-    public:
-        PluginsLoader();
-        ~PluginsLoader();
+    PluginInstance() = default;
+    PluginInstance(const PluginInstance&) = delete; // 禁止复制，具有插件的唯一所有权
+    PluginInstance& operator=(const PluginInstance&) = delete;
+    PluginInstance(PluginInstance&&) noexcept = default;
+    PluginInstance& operator=(PluginInstance&&) noexcept = default;
+};
 
-        // Load plugins from a directory
-        bool LoadPlugins(const std::string& directory);
+class PluginLoader {
+public:
+    PluginLoader() = default;
+    ~PluginLoader();
 
-        // Unload all plugins
-        void UnloadPlugins();
+    bool loadAll(const std::string& directory);
+    void unloadAll();
 
-        // Get loaded plugins
-        const std::vector<PluginEntry>& GetPlugins() const;
+    const std::vector<PluginInstance>& plugins() const { return plugins_; }
+    std::vector<PluginInstance>& plugins() { return plugins_; }
 
-    private:
-        bool LoadPlugin(const std::string& path);
-        void UnloadPlugin(PluginEntry& entry);
+private:
+    bool loadOne(const std::string& path);
+    void unloadOne(PluginInstance& plugin) noexcept;
+    bool validateAPI(const PluginAPI* api, const std::string& path) const;
 
-    private:
-        std::vector<PluginEntry> m_plugins;
-    };
+    std::vector<PluginInstance> plugins_;
+};
 
-}
+// Compatibility name for code that used the original class.
+using PluginsLoader = PluginLoader;
 
-#endif //MCP_SERVER_PLUGINS_LOADER_H
+} // namespace vx::mcp
+
+#endif // MCP_SERVER_PLUGINS_LOADER_H

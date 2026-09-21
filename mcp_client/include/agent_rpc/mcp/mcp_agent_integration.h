@@ -287,7 +287,7 @@ private:
     mutable std::mutex tool_cache_mutex_;
     
     // RAG-MCP
-    std::unique_ptr<rag::ToolRetriever> tool_retriever_;
+    std::unique_ptr<rag::ToolRetriever> tool_retriever_; // RAG检索器
     
     // 状态
     std::atomic<bool> initialized_{false};

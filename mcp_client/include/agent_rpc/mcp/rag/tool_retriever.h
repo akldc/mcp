@@ -194,7 +194,7 @@ private:
     
     RetrieverConfig config_;
     std::unique_ptr<EmbeddingService> embedding_service_;
-    std::unique_ptr<EmbeddingCache> cache_;
+    std::unique_ptr<EmbeddingCache> cache_;  // 缓存 EmbeddingService 的结果，LRU + TTL 缓存
     std::unique_ptr<VectorIndex> index_;
     bool initialized_ = false;
 };

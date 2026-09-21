@@ -25,6 +25,8 @@ set(SOURCES
     src/transport/HttpStreamTransport.cpp
     src/transport/SseTransport.cpp
     src/loader/PluginsLoader.cpp
+    src/manager/PluginRegistries.cpp
+    src/manager/PluginManager.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
@@ -33,11 +35,13 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     src
     src/transport
     src/interface
+    src/loader
+    src/manager
     libs_tier_01/aixlog-1.5.0/include
     ${CMAKE_CURRENT_BINARY_DIR}
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads)
+target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 
 # 平台相关链接
 if(WIN32)
